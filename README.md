@@ -1,23 +1,26 @@
 # AI Living City
 
+**GitHub:** https://github.com/Umidbaxtiyorvich/ai-living-city
+
 Avtonom 3D shahar simulyatori. AI Prezident shaharni boshqaradi; fuqarolar ishlaydi, yuradi, oila quradi. Brauzer yopilsa ham simulyatsiya serverda davom etadi.
 
-# Internetga joylash (Render.com — tez, bitta link)
+## Internetga joylash (3 daqiqa)
 
-1. Quyidagi repoga push qiling (yoki fork qiling)
-2. [Render Dashboard](https://dashboard.render.com/) → **New** → **Blueprint** → repongizni tanlang
-3. `render.yaml` avtomatik deploy qiladi — 3–5 daqiqada link tayyor
+1. [Render.com](https://render.com) ga kiring (GitHub bilan login)
+2. **New +** → **Blueprint**
+3. Repongizni tanlang: `Umidbaxtiyorvich/ai-living-city`
+4. **Apply** — 3–5 daqiqadan keyin link: `https://ai-living-city-xxxx.onrender.com`
 
-Yoki **Docker** bilan istalgan serverda:
+Bitta linkda hamma narsa: 3D shahar + API + WebSocket.
+
+> **Tez ishlashi uchun:** Render'da **Starter** plan ($7/oy) — Free rejim uxlasa sekin ochiladi.
+
+Docker (VPS):
 
 ```bash
 docker build -t ai-living-city .
 docker run -p 8000:8000 -v city-data:/data ai-living-city
 ```
-
-Brauzer: `http://SERVER:8000` — bitta port (API + 3D + WebSocket).
-
-Production optimizatsiya: xarita 80×80, gzip, faqat kamera yaqinidagi agentlar simulyatsiya qilinadi.
 
 ---
 
