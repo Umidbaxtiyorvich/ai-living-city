@@ -1,0 +1,16 @@
+.venv
+node_modules
+frontend/node_modules
+frontend/dist
+__pycache__
+.pytest_cache
+*.db
+*.sqlite
+.env
+.git
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/workshop/*.py
+!backend/workshop/.gitkeep
+terminals
+*.log

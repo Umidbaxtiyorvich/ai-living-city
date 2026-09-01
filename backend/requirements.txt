@@ -1,0 +1,20 @@
+# AI Living City — backend dependencies.
+#
+# Versions are left to the resolver so the project installs cleanly on a fresh
+# machine; `pip freeze > requirements.lock.txt` pins them for deployment.
+
+fastapi
+uvicorn[standard]
+sqlalchemy>=2.0
+alembic
+pydantic>=2
+pydantic-settings
+
+# Postgres driver. Unused with the default SQLite URL, but installed so
+# switching DATABASE_URL needs no dependency change.
+psycopg[binary]
+
+pytest
+httpx
+pillow
+python-multipart

@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+node_modules/
+dist/
+.DS_Store
+*.db
+*.sqlite
+*.db-shm
+*.db-wal
+.env
+*.log
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/workshop/*.py
+!backend/workshop/__init__.py

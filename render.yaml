@@ -1,0 +1,22 @@
+# Render.com — one-click deploy: https://render.com/deploy
+services:
+  - type: web
+    name: ai-living-city
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: MAP_SIZE
+        value: "80"
+      - key: DEFAULT_SPEED
+        value: "1"
+      - key: FOUNDING_POPULATION
+        value: "25"
+      - key: DATABASE_URL
+        value: sqlite:////data/city.db
+      - key: WORLD_NAME
+        value: AI Living City
+    disk:
+      name: city-data
+      mountPath: /data
+      sizeGB: 1
