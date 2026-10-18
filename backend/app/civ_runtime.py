@@ -22,6 +22,7 @@ from civ.catalog import BLUEPRINTS
 from civ.engine import TASK_LABELS, Civilization
 from civ.models import DAYS_PER_YEAR, MINUTES_PER_TICK, TICKS_PER_DAY
 
+from . import civ_store
 from .jsonutil import dumps
 
 #: 1× is real time: one simulated second per real second, the clock in step
@@ -80,14 +81,15 @@ class CivRuntime:
     # -- lifecycle ---------------------------------------------------------
 
     def start(self) -> None:
-        path = _save_path()
-        if path.is_file():
-            try:
-                self.civ = Civilization.restore(json.loads(path.read_text(encoding="utf-8")))
-                print(f"Tsivilizatsiya davom etadi: {self.civ.year}-yil, {len(self.civ.living)} kishi", flush=True)
-            except Exception as error:  # a broken save must not stop the server
-                print(f"Saqlangan dunyo o'qilmadi ({error}); yangi dunyo.", flush=True)
-                self.civ = None
+        try:
+            data = self._read_saved()
+            if data is not None:
+                self.civ = Civilization.restore(data)
+                where = "bazadan" if civ_store.enabled() else "fayldan"
+                print(f"Tsivilizatsiya davom etadi ({where}): {self.civ.year}-yil, {len(self.civ.living)} kishi", flush=True)
+        except Exception as error:  # a broken save must not stop the server
+            print(f"Saqlangan dunyo o'qilmadi ({error}); yangi dunyo.", flush=True)
+            self.civ = None
         if self.civ is None:
             self._new_world()
         else:
@@ -95,6 +97,16 @@ class CivRuntime:
             self._catch_up()
         self.civ.auto_move = False
         self._last_save_day = self.civ.day
+
+    @staticmethod
+    def _read_saved() -> dict | None:
+        """The saved world: from the database when one is configured, else the file."""
+        if civ_store.enabled():
+            return civ_store.load()
+        path = _save_path()
+        if path.is_file():
+            return json.loads(path.read_text(encoding="utf-8"))
+        return None
 
     def _catch_up(self) -> None:
         """Life went on while the server slept: replay the missed hours, up to two days."""
@@ -138,6 +150,9 @@ class CivRuntime:
         path = _save_path()
 
         def write() -> None:
+            if civ_store.enabled():
+                civ_store.save(data)
+                return
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
@@ -145,7 +160,8 @@ class CivRuntime:
 
         try:
             await asyncio.to_thread(write)
-        except OSError as error:
+        except Exception as error:  # a failed save is reported, never fatal
+            print(f"Saqlash muvaffaqiyatsiz: {error}", flush=True)
             return {"saved": False, "error": str(error)}
         self._last_save_day = data["tick"] // TICKS_PER_DAY
         self._last_save_time = time.time()
