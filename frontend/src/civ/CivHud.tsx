@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { act, civPost, useCiv } from "./store";
 import { LeaderPanel } from "./LeaderPanel";
+import { CROP_NAMES } from "./Crops";
 
 /** 1× is real life; the rest are for watching years go by. */
 const SPEEDS: [number, string][] = [
@@ -118,7 +119,12 @@ function Inspector() {
         <h3>{b.name}</h3>
         <p className="muted">{b.complete ? "Qurilgan" : `Qurilmoqda — ${Math.round(b.progress * 100)}%`}</p>
         {b.category === "home" && <p>Yashovchilar: {b.residents}</p>}
-        {b.kind === "field" && <Bar label="Hosil" value={b.growth} />}
+        {b.kind === "field" && (
+          <>
+            <p>{b.crop ? `Ekilgan: ${CROP_NAMES[b.crop] ?? b.crop}` : "Hozir bo'sh (navbatdagi ekin kutilmoqda)"}</p>
+            {b.crop && <Bar label="Pishish" value={b.growth} />}
+          </>
+        )}
       </div>
     );
   }
@@ -219,7 +225,7 @@ export function CivHud() {
         <div className="civ-title">
           <strong>{stats.era}</strong>
           <span>
-            {time.year}-yil · {time.day_of_year}-kun · {hourLabel(time.hour)} {time.night ? "🌙" : "☀️"}
+            {time.year}-yil · {time.season ?? ""} · {time.day_of_year}-kun · {hourLabel(time.hour)} {time.night ? "🌙" : "☀️"}
           </span>
         </div>
         <div className="civ-speeds">
@@ -275,7 +281,7 @@ export function CivHud() {
                 {s.rank} · {s.population} kishi
               </span>
               <em>
-                🍎 {s.storage.food} · 🪵 {s.storage.wood} · 🪨 {s.storage.stone}
+                🍎 {s.storage.food} · 🍖 {s.storage.meat ?? 0} · 🪵 {s.storage.wood} · 🪨 {s.storage.stone}
               </em>
             </li>
           ))}

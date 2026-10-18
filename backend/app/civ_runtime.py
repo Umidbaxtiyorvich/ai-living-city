@@ -68,6 +68,10 @@ class CivRuntime:
         self._lock = asyncio.Lock()
         self._sent_buildings = -1
         self._last_resources = 0.0
+        self._last_buildings = 0.0
+        self._signatures: dict[str, str] = {}
+        #: Per browser: the newest unsent frame and a wake-up for its sender.
+        self._outbox: dict[WebSocket, dict] = {}
         self._last_save_day = 0
         self._last_save_time = time.time()
         self._debt = 0.0
@@ -214,8 +218,6 @@ class CivRuntime:
             "animals": [a.compact() for a in civ.animals.values()],
             "player_id": civ.player_id,
             "player_auto": bool(civ.player.auto) if civ.player else False,
-            "petitions": civ.petitions_payload(),
-            "customs": civ.customs_payload(),
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -231,6 +233,8 @@ class CivRuntime:
             "buildings": civ.buildings_payload(),
             "looks": [p.looks() for p in civ.people.values() if p.alive],
             "chronicle": civ.chronicle_payload(60),
+            "petitions": civ.petitions_payload(),
+            "customs": civ.customs_payload(),
             "labels": TASK_LABELS,
             "blueprints": [
                 {
@@ -252,42 +256,87 @@ class CivRuntime:
         if changes:
             payload["terrain_changes"] = changes
         now = time.perf_counter()
-        if changes or now - self._last_resources > 2.0:
-            if changes or now - self._last_resources > 6.0:
-                payload["resources"] = civ.world.resource_payload()
-                self._last_resources = now
-        if civ.buildings_version != self._sent_buildings:
+        # Heavy lists go out only when they changed, and at most once a second:
+        # at a year a second they change on every frame.
+        if (changes and now - self._last_resources > 1.0) or now - self._last_resources > 6.0:
+            payload["resources"] = civ.world.resource_payload()
+            self._last_resources = now
+        if civ.buildings_version != self._sent_buildings and now - self._last_buildings > 1.0:
             self._sent_buildings = civ.buildings_version
+            self._last_buildings = now
             payload["buildings"] = civ.buildings_payload()
-        payload["chronicle"] = civ.chronicle_payload(60)
+        for key, build in (
+            ("chronicle", lambda: civ.chronicle_payload(60)),
+            ("petitions", civ.petitions_payload),
+            ("customs", civ.customs_payload),
+        ):
+            value = build()
+            signature = dumps(value)
+            if self._signatures.get(key) != signature:
+                self._signatures[key] = signature
+                payload[key] = value
         return payload
 
     async def _broadcast(self, payload: dict[str, Any]) -> None:
-        if not self._clients:
-            return
-        message = dumps(payload)
-        dead = []
+        """
+        Hands the frame to every browser's outbox.
+
+        A slow browser never builds a backlog: if its previous frame has not
+        gone out yet, the two are merged — incremental parts (terrain changes,
+        new faces) are kept, everything else is simply the newer state.
+        Without this a busy tab fell minutes behind and kept replaying the past.
+        """
         for client in list(self._clients):
-            try:
-                await client.send_text(message)
-            except Exception:
-                dead.append(client)
-        for client in dead:
-            self._clients.discard(client)
+            box = self._outbox.get(client)
+            if box is None:
+                continue
+            pending = box.get("payload")
+            if pending is not None:
+                merged = dict(payload)
+                for key in ("terrain_changes", "looks"):
+                    if key in pending:
+                        merged[key] = pending[key] + payload.get(key, [])
+                for key in ("buildings", "resources", "chronicle", "petitions", "customs", "world", "blueprints", "labels"):
+                    if key in pending and key not in payload:
+                        merged[key] = pending[key]
+                if pending.get("kind") == "snapshot":
+                    merged["kind"] = "snapshot"
+                payload_to_send = merged
+            else:
+                payload_to_send = payload
+            box["payload"] = payload_to_send
+            box["event"].set()
+
+    async def _sender(self, websocket: WebSocket, box: dict) -> None:
+        try:
+            while True:
+                await box["event"].wait()
+                box["event"].clear()
+                payload = box.pop("payload", None)
+                if payload is None:
+                    continue
+                await websocket.send_text(dumps(payload))
+        except Exception:
+            self._clients.discard(websocket)
 
     async def register(self, websocket: WebSocket) -> None:
         await websocket.accept()
         async with self._lock:
-            first = dumps(self.snapshot())
+            first = self.snapshot()
+        box: dict = {"event": asyncio.Event(), "payload": first}
+        box["event"].set()
+        self._outbox[websocket] = box
         self._clients.add(websocket)
-        await websocket.send_text(first)
+        sender = asyncio.create_task(self._sender(websocket, box))
         try:
             while True:
                 await websocket.receive_text()
         except WebSocketDisconnect:
             pass
         finally:
+            sender.cancel()
             self._clients.discard(websocket)
+            self._outbox.pop(websocket, None)
 
     # -- commands ----------------------------------------------------------
 
@@ -334,6 +383,7 @@ class CivRuntime:
     async def reset(self) -> dict:
         async with self._lock:
             self._new_world()
+            self._signatures.clear()
             payload = self.snapshot()
         await self._broadcast(payload)
         await self.save()

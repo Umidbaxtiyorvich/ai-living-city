@@ -28,14 +28,22 @@ const FEMALE = "/models/humans/maya.glb";
 const MAX_REAL = 24;
 const NEAR = 34;
 const ADULT = 0.5;
-const STAGE: Record<string, number> = { teenager: 0.88, adult: 1, elder: 0.97 };
+const STAGE: Record<string, number> = { baby: 0.3, child: 0.6, teenager: 0.88, adult: 1, elder: 0.97 };
+/** Children are not small adults: their heads are much larger for their size. */
+const HEAD: Record<string, number> = { baby: 1.55, child: 1.28, teenager: 1.06 };
 
 useGLTF.preload(MALE);
 useGLTF.preload(FEMALE);
 
-function rotationsOnly(clip: AnimationClip): AnimationClip {
+/**
+ * The rig's feet hang from the armature root (IK-style), not from the shins,
+ * so their motion lives in position tracks — dropping those glued the feet to
+ * the ground. Only scale tracks are removed: they would fight the child
+ * proportions set below. Both clips walk and stand in place.
+ */
+function forBody(clip: AnimationClip): AnimationClip {
   const copy = clip.clone();
-  copy.tracks = copy.tracks.filter((t) => !t.name.endsWith(".position") && !t.name.endsWith(".scale"));
+  copy.tracks = copy.tracks.filter((t) => !t.name.endsWith(".scale"));
   return copy;
 }
 
@@ -80,14 +88,21 @@ function RealPerson({ id, female, stage }: { id: number; female: boolean; stage:
   }, [source.scene, look]);
 
   const group = useRef<Group>(null);
+  const head = useMemo(() => {
+    let found: Object3D | null = null;
+    model.traverse((node) => {
+      if (!found && node.name === "head") found = node;
+    });
+    return found as Object3D | null;
+  }, [model]);
   const anim = useRef<{ mixer: AnimationMixer; walk?: AnimationAction; idle?: AnimationAction; on?: string } | null>(null);
 
   useEffect(() => {
     const mixer = new AnimationMixer(model);
     const walkClip = male.animations.find((c) => /walk/i.test(c.name));
     const idleClip = woman.animations.find((c) => /idle/i.test(c.name));
-    const walk = walkClip ? mixer.clipAction(rotationsOnly(walkClip)) : undefined;
-    const idle = idleClip ? mixer.clipAction(rotationsOnly(idleClip)) : undefined;
+    const walk = walkClip ? mixer.clipAction(forBody(walkClip)) : undefined;
+    const idle = idleClip ? mixer.clipAction(forBody(idleClip)) : undefined;
     walk?.setLoop(LoopRepeat, Infinity);
     idle?.setLoop(LoopRepeat, Infinity);
     idle?.play();
@@ -111,9 +126,11 @@ function RealPerson({ id, female, stage }: { id: number; female: boolean; stage:
     const row = useCiv.getState().people.find((p) => p[0] === id);
     const task = row?.[3] ?? "idle";
     const walking = body.speed > 0.08;
-    const lying = task === "sleep" && !walking;
-    g.position.set(body.x, lying ? 0.06 : 0, body.z);
-    g.rotation.set(lying ? -Math.PI / 2 : 0, body.yaw, 0);
+    const baby = stage === "baby";
+    const lying = (task === "sleep" && !walking) || baby;
+    // A baby rests in its mother's arms, at her chest.
+    g.position.set(body.x, baby ? 0.27 : lying ? 0.06 : 0, body.z);
+    g.rotation.set(lying ? -Math.PI / 2 : 0, body.yaw + (baby ? Math.PI / 2 : 0), 0);
     const want = walking ? "walk" : "idle";
     if (a.on !== want) {
       const next = want === "walk" ? a.walk : a.idle;
@@ -126,6 +143,8 @@ function RealPerson({ id, female, stage }: { id: number; female: boolean; stage:
     }
     if (a.walk && walking) a.walk.timeScale = Math.min(1.8, Math.max(0.6, body.speed / 0.35));
     a.mixer.update(Math.min(dt, 0.1));
+    const big = HEAD[stage];
+    if (head && big) head.scale.setScalar(big);
   });
 
   const scale = unit * ADULT * (STAGE[stage] ?? 1) * (look?.height ?? 1);
@@ -150,7 +169,13 @@ export function RealPeople() {
     if (state.clock.elapsedTime - last.current < 0.5) return;
     last.current = state.clock.elapsedTime;
     const { people, playerId, selected } = useCiv.getState();
-    const target = camera.position;
+    // Distance from what the camera looks at, not from the camera itself:
+    // seen from above, the person under the crosshair is the one to detail.
+    const controls = state.controls as unknown as { target?: { x: number; z: number } } | null;
+    const target = controls?.target ?? camera.position;
+    const zoomedOut = controls?.target
+      ? Math.hypot(camera.position.x - controls.target.x, camera.position.y, camera.position.z - controls.target.z) > 70
+      : false;
     const ranked = people
       .filter((p) => STAGE[p[4]] != null)
       .map((p) => {
@@ -161,7 +186,7 @@ export function RealPeople() {
         const must = p[0] === playerId || p[0] === selected;
         return { p, d: must ? -1 : d };
       })
-      .filter((item) => item.d < NEAR)
+      .filter((item) => item.d < NEAR && (!zoomedOut || item.d < 0))
       .sort((a, b) => a.d - b.d)
       .slice(0, MAX_REAL);
     const next = ranked.map(({ p }) => ({ id: p[0], female: p[5] === "f", stage: p[4] }));

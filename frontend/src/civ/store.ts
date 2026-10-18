@@ -2,8 +2,8 @@ import { create } from "zustand";
 
 /** [id, x, y, task, stage, gender initial, carrying, is player] — streamed ten times a second. */
 export type PersonRow = [number, number, number, string, string, string, string, number];
-/** [id, kind, x, y, moving] */
-export type AnimalRow = [number, string, number, number, number];
+/** [id, kind, x, y, moving, young] */
+export type AnimalRow = [number, string, number, number, number, number];
 
 export interface Blueprint {
   kind: string;
@@ -61,6 +61,7 @@ export interface CivBuilding {
   roof: string;
   style: number;
   growth: number;
+  crop?: string;
   residents: number;
   settlement: number;
 }
@@ -73,7 +74,7 @@ export interface CivSettlement {
   founded_day: number;
   population: number;
   rank: string;
-  storage: { food: number; wood: number; stone: number };
+  storage: { food: number; wood: number; stone: number; meat?: number };
   leader_id: number | null;
 }
 
@@ -108,6 +109,7 @@ export interface CivTime {
   day_of_year: number;
   hour: number;
   night: boolean;
+  season?: string;
 }
 
 export interface Resources {

@@ -2,6 +2,7 @@ import { memo, useMemo } from "react";
 import type { ThreeEvent } from "@react-three/fiber";
 import { BoxGeometry, Color, ConeGeometry, CylinderGeometry, MeshStandardMaterial, SphereGeometry } from "three";
 import { surface } from "./textures";
+import { CropField, FieldBed } from "./Crops";
 import { useCiv, type CivBuilding } from "./store";
 
 // One geometry per primitive and one material per colour, shared by every building.
@@ -194,20 +195,14 @@ function Civic({ b, night }: { b: CivBuilding; night: boolean }) {
           ))}
         </group>
       );
-    case "field": {
-      const ripe = b.growth;
-      const crop = `rgb(${Math.round(90 + ripe * 130)}, ${Math.round(150 + ripe * 40)}, ${Math.round(50 - ripe * 20)})`;
-      const rows = [];
-      for (let i = 0; i < 6; i++) {
-        rows.push(<Box key={i} p={[0, 0.03 + ripe * 0.05, -d / 2 + 0.2 + (i * (d - 0.4)) / 5]} s={[w, 0.06 + ripe * 0.1, 0.16]} c={crop} />);
-      }
+    case "field":
+      // What grows here was chosen by its farmers (see backend civ/engine.py choose_crop).
       return (
         <group>
-          <Box p={[0, 0.01, 0]} s={[w + 0.1, 0.02, d + 0.1]} c="#ffffff" t="farm_soil_diff" />
-          {rows}
+          <FieldBed w={w} d={d} />
+          {b.crop ? <CropField crop={b.crop} growth={b.growth} w={w} d={d} /> : null}
         </group>
       );
-    }
     case "well":
       return (
         <group>

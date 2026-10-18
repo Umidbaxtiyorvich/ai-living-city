@@ -22,6 +22,9 @@ from dataclasses import dataclass
 from sim.agents.generator import FEMALE_NAMES, MALE_NAMES, SURNAMES, surname_for
 
 from .catalog import (
+    CROP_BY_KEY,
+    CROPS,
+    SEASONS,
     BLUEPRINT_BY_KIND,
     BLUEPRINTS,
     RANKS,
@@ -51,7 +54,13 @@ CUSTOM_TEXT = {key: text for key, _, text in CUSTOM_WORDS}
 from .world import BUILDABLE, MAX_WOOD, WALKABLE, Terrain, World
 
 FOUNDERS = 10
-CARRY_LIMIT = {"food": 8.0, "wood": 6.0, "stone": 4.0}
+CARRY_LIMIT = {"food": 8.0, "wood": 6.0, "stone": 4.0, "meat": 20.0}
+#: Meat a kill yields, by animal.
+GAME_MEAT = {"horse": 22.0, "fox": 5.0}
+#: Most animals of a kind the land carries.
+ANIMAL_CAP = {"horse": 45, "fox": 18}
+#: Lifespan of animals in game years.
+ANIMAL_LIFESPAN = {"horse": 25, "fox": 9}
 HOURS_PER_TICK = MINUTES_PER_TICK / 60.0
 
 SKIN_TONES = ("#f1c9a5", "#e0ac80", "#c68c5a", "#a8703f", "#8d5a2b", "#d9a273")
@@ -69,6 +78,7 @@ WORK_SKILL = {
     "build": "building",
     "farm": "farming",
     "think": "thinking",
+    "hunt": "hunting",
 }
 
 TASK_LABEL = {
@@ -82,6 +92,7 @@ TASK_LABEL = {
     "build": "Qurmoqda",
     "farm": "Dehqonchilik",
     "think": "O'ylamoqda",
+    "hunt": "Ovda",
     "socialize": "Suhbatlashmoqda",
     "court": "Uchrashuvda",
     "play": "O'ynamoqda",
@@ -153,6 +164,14 @@ class Civilization:
     @property
     def hour(self) -> float:
         return ((self.tick % TICKS_PER_DAY) * MINUTES_PER_TICK * 60.0 + self.subsecond) / 3600.0
+
+    @property
+    def season(self) -> str:
+        return SEASONS[min(3, (self.day % DAYS_PER_YEAR) * 4 // DAYS_PER_YEAR)][0]
+
+    @property
+    def season_name(self) -> str:
+        return dict(SEASONS)[self.season]
 
     @property
     def clock_seconds(self) -> float:
@@ -471,7 +490,7 @@ class Civilization:
             return
 
         if p.hunger < 40:
-            if settlement is not None and settlement.storage.food >= 1:
+            if settlement is not None and (settlement.storage.food >= 1 or settlement.storage.meat >= 1):
                 self._go(p, "eat", self._drop_point(settlement))
                 return
             self._start_gathering(p, "forage", eat=True)
@@ -519,6 +538,8 @@ class Civilization:
             self._start_farming(p, settlement)
         elif choice in ("forage", "chop", "quarry"):
             self._start_gathering(p, choice)
+        elif choice == "hunt":
+            self._start_hunting(p)
 
     def _choose_work(self, p: Person, s: Settlement) -> list[str]:
         """Scores every option against the settlement's needs and the person's taste."""
@@ -539,6 +560,9 @@ class Civilization:
             "think": (0.05 + p.trait("openness") * 0.45 + p.awareness / 160.0) if self.next_discovery() else -1.0,
             "socialize": 0.1 + max(0.0, 50 - p.social) / 40.0 + p.trait("extraversion") * 0.2,
         }
+        if "tools" in self.known and self.animals and p.adult and p.age_years < 50:
+            # Hunting is chosen when food is short and by those who like it.
+            scores["hunt"] = 0.15 + max(0.0, food_need) / (residents * 6.0) + (0.25 if s.storage.meat < residents else 0.0)
         if fields:
             scores["forage"] *= 0.6
         if self.has("cooperation") and scores["build"] > 0:
@@ -748,7 +772,7 @@ class Civilization:
         if not fields:
             p.task = "idle"
             return
-        field = max(fields, key=lambda b: (b.growth >= 1.0, -math.hypot(b.x - p.x, b.y - p.y)))
+        field = max(fields, key=lambda b: (b.growth >= 1.0 or not b.crop, -math.hypot(b.x - p.x, b.y - p.y)))
         p.target_building = field.id
         cx, cy = field.center
         self._go(p, "farm", (cx + self.rng.uniform(-1, 1), cy + self.rng.uniform(-1, 1)))
@@ -762,12 +786,19 @@ class Civilization:
             self._gather_tick(p, settlement, tool)
         elif task == "haul":
             self._deliver(p)
+        elif task == "hunt":
+            self._hunt_tick(p, settlement)
         elif task == "build":
             self._build_tick(p, settlement, tool)
         elif task == "farm":
             self._farm_tick(p, settlement, tool)
         elif task == "eat":
-            if settlement is not None and settlement.storage.food >= 1:
+            if settlement is not None and settlement.storage.meat >= 1:
+                # Meat first: it fills more and will not keep.
+                settlement.storage.meat -= 1
+                p.hunger = min(100.0, p.hunger + 80)
+                p.social = min(100.0, p.social + 3)
+            elif settlement is not None and settlement.storage.food >= 1:
                 settlement.storage.food -= 1
                 p.hunger = min(100.0, p.hunger + 60)
                 p.social = min(100.0, p.social + 2)
@@ -892,7 +923,9 @@ class Civilization:
                 site.need_stone -= used
                 amount -= used
         if settlement is not None and amount > 0:
-            if kind == "food":
+            if kind == "meat":
+                settlement.storage.meat += amount
+            elif kind == "food":
                 settlement.storage.food += amount
             elif kind == "wood":
                 settlement.storage.wood += amount
@@ -900,7 +933,7 @@ class Civilization:
                 settlement.storage.stone += amount
         before = p.happiness
         p.carry, p.carry_kind = 0.0, ""
-        self._learn_taste(p, {"food": "forage", "wood": "chop", "stone": "quarry"}.get(kind, "haul"), 0.6 + (p.happiness - before) / 10)
+        self._learn_taste(p, {"food": "forage", "wood": "chop", "stone": "quarry", "meat": "hunt"}.get(kind, "haul"), 0.6 + (p.happiness - before) / 10)
         p.task = "idle"
 
     def _build_tick(self, p: Person, s: Settlement | None, tool: float) -> None:
@@ -927,23 +960,80 @@ class Civilization:
             p.task = "idle"
             return
         p.improve("farming", HOURS_PER_TICK)
-        if field.growth >= 1.0:
-            harvest = (16 + p.skill("farming") / 6) * tool
+        if not field.crop:
+            # Sowing: the farmer decides what this field grows this time.
+            if self.season == "winter":
+                p.task = "idle"
+                return
+            field.crop = self.choose_crop(field, s)
+            field.growth = 0.0
+            self.buildings_version += 1
+            crop = CROP_BY_KEY[field.crop]
+            p.thought = f"Bu dalaga {crop.name.lower()} ekdim — {self._crop_reason(field, s)}"
+            return
+        crop = CROP_BY_KEY.get(field.crop)
+        if field.growth >= 1.0 and crop is not None:
+            harvest = (crop.harvest + p.skill("farming") / 6) * tool
+            field.last_crop = field.crop
+            field.crop = ""
             field.growth = 0.0
             self.buildings_version += 1
             p.carry_kind, p.carry = "food", 0.0
             if s is not None:
                 s.storage.food += harvest
+            p.remember(f"{crop.name} hosilini yig'dim")
             self._learn_taste(p, "farm", 1.2)
             p.task = "idle"
             return
-        field.growth = min(1.0, field.growth + 0.0016 * (0.6 + p.skill("farming") / 80))
+        # Tending (weeding, watering) speeds the crop up.
+        field.growth = min(1.0, field.growth + self._growth_rate(field) * 1.4 * (0.6 + p.skill("farming") / 80))
+
+    def _growth_rate(self, field: Building) -> float:
+        crop = CROP_BY_KEY.get(field.crop)
+        if crop is None:
+            return 0.0
+        season = {"spring": 1.0, "summer": 1.15, "autumn": 0.6, "winter": 0.05}[self.season]
+        return season / (crop.days * TICKS_PER_DAY)
+
+    def choose_crop(self, field: Building, s: Settlement | None) -> str:
+        """What to sow: need first, then the season, the soil and rotation."""
+        residents = max(1, s.population if s else 1)
+        hungry = s is not None and s.storage.food < residents * 3
+        near_water = self.world.near_water(field.x + 1, field.y + 1, 4)
+        scores: dict[str, float] = {}
+        for crop in CROPS:
+            score = crop.harvest / crop.days
+            if hungry:
+                score += 12 / crop.days  # quick food beats a big harvest later
+            if self.season == "autumn" or self.has("stockpile"):
+                score += 6 if crop.keeps else 0
+            if crop.thirsty:
+                score += 4 if near_water else -6
+            if crop.key == field.last_crop:
+                score -= 5  # rotation keeps the soil healthy
+            score += self.rng.uniform(0, 2.5)
+            scores[crop.key] = score
+        return max(scores, key=lambda key: scores[key])
+
+    def _crop_reason(self, field: Building, s: Settlement | None) -> str:
+        crop = CROP_BY_KEY[field.crop]
+        residents = max(1, s.population if s else 1)
+        if s is not None and s.storage.food < residents * 3:
+            return "tez pishadi, ovqat kerak"
+        if crop.keeps and (self.season == "autumn" or self.has("stockpile")):
+            return "qishga saqlasa bo'ladi"
+        if crop.thirsty:
+            return "suv yaqin, yaxshi o'sadi"
+        if field.last_crop and field.last_crop != field.crop:
+            return "yer dam olsin deb almashlab ekdim"
+        return "shu yerga mos"
 
     def _grow_fields(self) -> None:
         changed = False
         for b in self.buildings.values():
-            if b.kind == "field" and b.complete and b.growth < 1.0:
-                b.growth = min(1.0, b.growth + 0.0015)
+            if b.kind == "field" and b.complete and b.crop and b.growth < 1.0:
+                # Called every sixth tick.
+                b.growth = min(1.0, b.growth + self._growth_rate(b) * 6 * 0.6)
                 changed = True
         if changed and self.tick % 36 == 0:
             self.buildings_version += 1
@@ -1381,6 +1471,100 @@ class Civilization:
     def customs_payload(self) -> list[dict]:
         return [{"key": c.key, "text": c.text, "day": c.day} for c in self.customs]
 
+
+    # -- hunting ---------------------------------------------------------------------
+
+    def _start_hunting(self, p: Person) -> None:
+        taken = {q.target_building for q in self.people.values() if q.alive and q is not p and q.task == "hunt"}
+        prey = [
+            a for a in self.animals.values()
+            if a.id not in taken and not a.young and math.hypot(a.x - p.x, a.y - p.y) < 45
+        ]
+        if not prey:
+            p.task = "idle"
+            return
+        # Big game is worth the walk.
+        target = min(prey, key=lambda a: math.hypot(a.x - p.x, a.y - p.y) / (2.0 if a.kind == "horse" else 1.0))
+        p.target_building = target.id
+        self._go(p, "hunt", (target.x, target.y))
+        p.task = "hunt"
+
+    def _hunt_tick(self, p: Person, s: Settlement | None) -> None:
+        prey = self.animals.get(p.target_building or -1)
+        if prey is None:
+            p.task = "idle"
+            return
+        p.improve("hunting", HOURS_PER_TICK)
+        if math.hypot(prey.x - p.x, prey.y - p.y) > 1.6:
+            if p.task_ticks > 30:
+                p.task = "idle"  # it got away
+                return
+            self._go(p, "hunt", (prey.x, prey.y))
+            p.task = "hunt"
+            return
+        chance = 0.3 + p.skill("hunting") / 200 + (0.15 if "bronze" in self.known else 0)
+        if self.rng.random() > chance:
+            # Startled: the animal bolts a little way.
+            prey.tx = prey.x + self.rng.uniform(-5, 5)
+            prey.ty = prey.y + self.rng.uniform(-5, 5)
+            prey.wait = 0
+            return
+        del self.animals[prey.id]
+        meat = GAME_MEAT.get(prey.kind, 8.0)
+        p.carry_kind, p.carry = "meat", meat
+        name = {"horse": "yovvoyi ot", "fox": "tulki"}.get(prey.kind, prey.kind)
+        p.remember(f"Ovda {name} ovladim")
+        if prey.kind == "horse" and self.rng.random() < 0.3:
+            self.log(f"{p.name} {p.surname} ovdan {name} go'shti olib keldi", "life")
+        self._learn_taste(p, "hunt", 1.3)
+        self._go_drop(p, s)
+
+    # -- animal life -----------------------------------------------------------------
+
+    def _animal_life(self) -> None:
+        """Daily: animals age, pair up, give birth and die of old age."""
+        counts: dict[str, int] = {}
+        for a in self.animals.values():
+            counts[a.kind] = counts.get(a.kind, 0) + 1
+        born = 0
+        for a in list(self.animals.values()):
+            a.age_days += 1
+            if a.age_days > ANIMAL_LIFESPAN.get(a.kind, 15) * DAYS_PER_YEAR and self.rng.random() < 0.08:
+                del self.animals[a.id]
+                counts[a.kind] -= 1
+                continue
+            if a.sex != "f" or a.young or self.day - a.last_birth_day < DAYS_PER_YEAR:
+                continue
+            if counts.get(a.kind, 0) >= ANIMAL_CAP.get(a.kind, 20):
+                continue
+            mate = next(
+                (
+                    m for m in self.animals.values()
+                    if m.kind == a.kind and m.sex == "m" and not m.young
+                    and math.hypot(m.x - a.x, m.y - a.y) < 10
+                ),
+                None,
+            )
+            if mate is None:
+                continue
+            # The male courts her: walks over before the foal or cub arrives.
+            mate.tx, mate.ty, mate.wait = a.x + 0.6, a.y + 0.4, 0
+            if self.rng.random() > (0.08 if a.kind == "horse" else 0.12):
+                continue
+            litter = 1 if a.kind == "horse" else self.rng.randint(1, 3)
+            for _ in range(litter):
+                baby_id = max(self.animals, default=0) + 1
+                self.animals[baby_id] = Animal(
+                    baby_id, a.kind, a.x + self.rng.uniform(-0.4, 0.4), a.y + self.rng.uniform(-0.4, 0.4),
+                    a.x, a.y, wait=self.rng.uniform(0, 60), herd=a.herd,
+                    sex=self.rng.choice("mf"), age_days=0.0, mother_id=a.id,
+                )
+                counts[a.kind] = counts.get(a.kind, 0) + 1
+                born += 1
+            a.last_birth_day = self.day
+        if born and self.rng.random() < 0.15:
+            self.log("Dashtda yovvoyi otlar podasiga yangi qulunlar qo'shildi", "life")
+
     # -- animals ---------------------------------------------------------------
 
     def spawn_animals(self) -> None:
@@ -1396,7 +1580,10 @@ class Civilization:
             for _ in range(self.rng.randint(3, 5)):
                 x = spot[0] + self.rng.uniform(-2, 2)
                 y = spot[1] + self.rng.uniform(-2, 2)
-                self.animals[next_id] = Animal(next_id, "horse", x, y, x, y, wait=self.rng.uniform(0, 200), herd=herd)
+                self.animals[next_id] = Animal(
+                    next_id, "horse", x, y, x, y, wait=self.rng.uniform(0, 200), herd=herd,
+                    sex="m" if _ % 2 == 0 else "f", age_days=self.rng.uniform(30, 150),
+                )
                 next_id += 1
         for _ in range(6):
             spot = w.nearest(
@@ -1405,7 +1592,11 @@ class Civilization:
             )
             if spot is None:
                 continue
-            self.animals[next_id] = Animal(next_id, "fox", spot[0], spot[1], spot[0], spot[1], wait=self.rng.uniform(0, 300))
+            self.animals[next_id] = Animal(
+                next_id, "fox", spot[0], spot[1], spot[0], spot[1], wait=self.rng.uniform(0, 300),
+                herd=100 + len(self.animals) % 3, sex="m" if len(self.animals) % 2 else "f",
+                age_days=self.rng.uniform(30, 80),
+            )
             next_id += 1
 
     def _move_animals(self, seconds: float) -> None:
@@ -1427,7 +1618,12 @@ class Civilization:
                 a.y += dy / dist * step
                 continue
             a.x, a.y = a.tx, a.ty
-            a.wait = self.rng.uniform(40, 240)
+            # Grazing stops last minutes, not seconds.
+            a.wait = self.rng.uniform(180, 1500)
+            mother = self.animals.get(a.mother_id) if a.young and a.mother_id else None
+            if mother is not None:
+                a.tx, a.ty, a.wait = mother.x + 0.5, mother.y + 0.3, self.rng.uniform(5, 30)
+                continue
             anchor = leaders.get(a.herd) if a.kind == "horse" and leaders.get(a.herd) is not a else a
             for _ in range(8):
                 tx = anchor.x + self.rng.uniform(-6, 6)
@@ -1733,6 +1929,7 @@ class Civilization:
             if any(b.kind == "granary" and b.complete and b.settlement_id == s.id for b in self.buildings.values()):
                 keep = 0.988
             s.storage.food *= keep
+            s.storage.meat *= 0.85
             stores = sum(
                 1 for b in self.buildings.values()
                 if b.settlement_id == s.id and b.complete and b.kind in ("storehouse", "granary")
@@ -1753,6 +1950,7 @@ class Civilization:
         self._marriages()
         self._births()
         self._daily_troubles()
+        self._animal_life()
         for p in self.living:
             self._reflect(p)
         self._emigrate()
@@ -2079,6 +2277,7 @@ class Civilization:
             "day_of_year": self.day % DAYS_PER_YEAR + 1,
             "hour": round(self.hour, 4),
             "night": self.night,
+            "season": self.season_name,
         }
 
     def buildings_payload(self) -> list[dict]:

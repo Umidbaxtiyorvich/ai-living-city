@@ -84,6 +84,9 @@ function Animal({ id, kind }: { id: number; kind: string }) {
     }
     g.position.set(s.x, 0, s.z);
     g.rotation.y = s.yaw;
+    // Foals and cubs are small; they grow into adults.
+    const young = row[5] === 1;
+    g.scale.setScalar(young ? 0.55 : 1);
     const a = anim.current;
     if (!a) return;
     const moving = row[4] === 1;

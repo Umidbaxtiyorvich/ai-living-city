@@ -228,6 +228,10 @@ class Building:
     style: int = 0
     #: Crop growth for fields, 0..1.
     growth: float = 0.0
+    #: What is sown in a field ("" = fallow) and what was sown before it,
+    #: so the farmers can rotate crops.
+    crop: str = ""
+    last_crop: str = ""
     demolished: bool = False
 
     @property
@@ -272,6 +276,7 @@ class Building:
             "roof": self.roof,
             "style": self.style,
             "growth": round(self.growth, 2),
+            "crop": self.crop,
             "residents": len(self.residents),
             "settlement": self.settlement_id,
         }
@@ -319,7 +324,16 @@ class Animal:
     #: Simulated seconds left to graze before moving on.
     wait: float = 0.0
     herd: int = 0
+    sex: str = "f"
+    #: Age in game days; young animals stay small and close to their mother.
+    age_days: float = 400.0
+    last_birth_day: int = -999
+    mother_id: int | None = None
+
+    @property
+    def young(self) -> bool:
+        return self.age_days < 24
 
     def compact(self) -> list:
         moving = 1 if self.wait <= 0 and (abs(self.tx - self.x) + abs(self.ty - self.y)) > 0.05 else 0
-        return [self.id, self.kind, round(self.x, 2), round(self.y, 2), moving]
+        return [self.id, self.kind, round(self.x, 2), round(self.y, 2), moving, 1 if self.young else 0]

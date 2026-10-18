@@ -127,9 +127,46 @@ class Storage:
     food: float = 0.0
     wood: float = 0.0
     stone: float = 0.0
+    #: Game from the hunt; filling, but it spoils fast.
+    meat: float = 0.0
 
     def as_dict(self) -> dict:
-        return {"food": round(self.food), "wood": round(self.wood), "stone": round(self.stone)}
+        return {
+            "food": round(self.food), "wood": round(self.wood),
+            "stone": round(self.stone), "meat": round(self.meat),
+        }
+
+
+@dataclass(frozen=True)
+class Crop:
+    key: str
+    name: str
+    #: Game days from sowing to harvest in the growing season.
+    days: float
+    #: Food per harvest of a 3×3 field.
+    harvest: float
+    #: Keeps through winter (grain) rather than spoiling quickly.
+    keeps: bool = False
+    #: Wants rich, damp soil.
+    thirsty: bool = False
+
+
+CROPS: tuple[Crop, ...] = (
+    Crop("wheat", "Bug'doy", 3.2, 30, keeps=True),
+    Crop("barley", "Arpa", 2.6, 24, keeps=True),
+    Crop("corn", "Makkajo'xori", 3.4, 34, thirsty=True),
+    Crop("carrot", "Sabzi", 2.0, 18),
+    Crop("potato", "Kartoshka", 2.4, 26),
+    Crop("melon", "Qovun", 3.0, 22, thirsty=True),
+)
+CROP_BY_KEY = {crop.key: crop for crop in CROPS}
+
+SEASONS: tuple[tuple[str, str], ...] = (
+    ("spring", "Bahor"),
+    ("summer", "Yoz"),
+    ("autumn", "Kuz"),
+    ("winter", "Qish"),
+)
 
 
 SETTLEMENT_NAMES = (
