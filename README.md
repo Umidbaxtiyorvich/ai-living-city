@@ -2,7 +2,29 @@
 
 **GitHub:** https://github.com/Umidbaxtiyorvich/ai-living-city
 
-Avtonom 3D shahar simulyatori. AI Prezident shaharni boshqaradi; fuqarolar ishlaydi, yuradi, oila quradi. Brauzer yopilsa ham simulyatsiya serverda davom etadi.
+Tsivilizatsiya simulyatori. Bo'sh yerda **10 kishi**dan boshlanadi: odamlar o'zlari
+meva teradi, o'tin kesadi, tosh qazadi, o'z uylarini quradi, turmush qurib farzand
+ko'radi, kashfiyotlar qiladi (dehqonchilik, kulolchilik, toshtaroshlik, yozuv…).
+Odamlar ko'paygach, bir guruh ko'chib, yangi qishloqqa asos soladi. Hech kim
+boshqarmaydi: har bir odam nima qilishni o'zi hal qiladi. Brauzer yopilsa ham
+simulyatsiya serverda davom etadi.
+
+Eski "boshqariladigan shahar" rejimi ham saqlangan: `WORLD_MODE=city`.
+
+## Tsivilizatsiya rejimi (sukut bo'yicha)
+
+- `backend/civ/`: dunyo (orol, ko'llar, o'rmon, tosh, butalar), odamlar, binolar,
+  texnologiyalar va dvigatel.
+- Har bir odam ehtiyojlari (ochlik, kuch, muloqot, sog'liq), mahorati, xarakteri,
+  orzulari, xotiralari va ichki fikriga ega. Qaysi ish yoqishini tajribadan o'rganadi.
+- Uy turi oila bilimi va xarakteriga qarab tanlanadi: kulba → yog'och uy / paxsa uy
+  → tosh uy → ikki qavatli uy → hovli-saroy.
+- Odamlar ko'p yuradigan joyda so'qmoq paydo bo'ladi.
+- Ekranda: yer bitta mesh bo'lib chiziladi, daraxtlar va odamlar "instancing" bilan
+  chiziladi, shuning uchun sahna 30 ga yaqin draw call bilan tez ishlaydi.
+- Tezlik: 1× da bir kun ≈ 48 soniya. 50× gacha tezlashtirish mumkin.
+- Dunyo har yili `backend/civ_world.json` (Docker'da `/data/civ_world.json`) fayliga
+  saqlanadi. "Yangi dunyo" tugmasi 10 kishi bilan qaytadan boshlaydi.
 
 ## Internetga joylash (3 daqiqa)
 

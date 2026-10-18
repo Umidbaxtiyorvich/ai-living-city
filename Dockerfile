@@ -17,7 +17,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=8000 \
     MAP_SIZE=80 \
     DEFAULT_SPEED=1 \
-    DATABASE_URL=sqlite:////data/city.db
+    DATABASE_URL=sqlite:////data/city.db \
+    CIV_SAVE_PATH=/data/civ_world.json \
+    WORLD_MODE=civ
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libpq5 \

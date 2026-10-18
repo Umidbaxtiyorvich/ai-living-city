@@ -155,3 +155,37 @@ async def save() -> dict:
 @router.get("/history")
 async def history(days: int = 365) -> dict:
     return await runtime.history(limit=max(1, min(days, 5_000)))
+
+
+# -- civilization mode -------------------------------------------------------
+
+from ..civ_runtime import civ_runtime  # noqa: E402
+from ..config import settings  # noqa: E402
+
+
+@router.get("/mode")
+def mode() -> dict:
+    return {"mode": settings.world_mode}
+
+
+@router.post("/civ/speed")
+async def civ_speed(body: SpeedBody) -> dict:
+    return await civ_runtime.set_speed(body.value)
+
+
+@router.get("/civ/person/{person_id}")
+async def civ_person(person_id: int) -> dict:
+    payload = await civ_runtime.person(person_id)
+    if payload.get("error"):
+        raise HTTPException(status_code=404, detail="Odam topilmadi")
+    return payload
+
+
+@router.post("/civ/save")
+async def civ_save() -> dict:
+    return await civ_runtime.save()
+
+
+@router.post("/civ/reset")
+async def civ_reset() -> dict:
+    return await civ_runtime.reset()

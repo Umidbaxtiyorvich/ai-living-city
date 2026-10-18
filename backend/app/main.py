@@ -10,6 +10,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api.routes import router
+from .civ_runtime import civ_runtime
+from .config import settings
 from .runtime import runtime
 
 # Frontend build output (Docker copies to /app/frontend/dist)
@@ -18,6 +20,14 @@ STATIC_ROOT = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    if settings.world_mode == "civ":
+        await asyncio.to_thread(civ_runtime.start)
+        civ_runtime.start_loop()
+        try:
+            yield
+        finally:
+            await civ_runtime.stop()
+        return
     # Loading a large save blocks for several seconds — run off the event loop.
     await asyncio.to_thread(runtime.start)
     runtime._start_loop()
@@ -41,6 +51,11 @@ app.include_router(router, prefix="/api")
 @app.websocket("/ws")
 async def world_socket(websocket: WebSocket) -> None:
     await runtime.register(websocket)
+
+
+@app.websocket("/ws/civ")
+async def civ_socket(websocket: WebSocket) -> None:
+    await civ_runtime.register(websocket)
 
 
 def _mount_frontend() -> None:

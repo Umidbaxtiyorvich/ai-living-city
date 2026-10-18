@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     starting_budget: float = 8_000_000.0
     #: Default watch speed — 1× is real-time (1 sim-minute per real second).
     default_speed: int = int(os.environ.get("DEFAULT_SPEED", "1"))
+    #: "civ" grows a civilization from ten people; "city" runs the managed city.
+    world_mode: str = os.environ.get("WORLD_MODE", "civ")
     host: str = "0.0.0.0"
     port: int = 8000
 

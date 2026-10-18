@@ -18,3 +18,5 @@ backend/workshop/*.py
 # Human models are downloaded (npm run fetch:humans) or added locally, not committed.
 frontend/public/models/humans/*
 !frontend/public/models/humans/.gitkeep
+civ_world.json
+civ_world.tmp
