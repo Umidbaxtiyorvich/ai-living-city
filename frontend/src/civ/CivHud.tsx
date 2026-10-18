@@ -8,7 +8,7 @@ const SPEEDS: [number, string][] = [
   [1, "Haqiqiy"],
   [10, "10×"],
   [60, "1 daq/s"],
-  [100, "100×"],
+  [100, "100× · 1 yil/s"],
   [360, "6 daq/s"],
   [1440, "1 kun/min"],
 ];

@@ -53,6 +53,11 @@ STEP_COST = {
     Terrain.BUILT: 0.8,
 }
 
+#: The same costs as a flat list indexed by terrain number; None = impassable.
+#: Routing reads this in its inner loop, where an Enum lookup per neighbour
+#: was most of the cost.
+_COST: list[float | None] = [STEP_COST.get(Terrain(t)) if Terrain(t) in WALKABLE else None for t in range(len(Terrain))]
+
 #: Footfall at which grass wears into a path.
 PATH_THRESHOLD = 60.0
 
@@ -299,6 +304,9 @@ class World:
         if not self.walkable(*goal):
             return []
         w = self.width
+        h = self.height
+        terrain = self.terrain
+        costs = _COST
         open_heap: list[tuple[float, int, int, int]] = [(0.0, 0, start[0], start[1])]
         came: dict[int, int] = {}
         cost: dict[int, float] = {start[1] * w + start[0]: 0.0}
@@ -322,17 +330,15 @@ class World:
                 (1, 1, 1.41), (1, -1, 1.41), (-1, 1, 1.41), (-1, -1, 1.41),
             ):
                 nx, ny = x + dx, y + dy
-                if not self.inside(nx, ny):
+                if nx < 0 or ny < 0 or nx >= w or ny >= h:
                     continue
                 ni = ny * w + nx
-                t = self.terrain[ni]
-                if t not in WALKABLE:
+                step = costs[terrain[ni]]
+                if step is None:
                     continue
-                if diag > 1 and (
-                    self.terrain[y * w + nx] not in WALKABLE or self.terrain[ny * w + x] not in WALKABLE
-                ):
+                if diag > 1 and (costs[terrain[y * w + nx]] is None or costs[terrain[ny * w + x]] is None):
                     continue
-                new_cost = base + STEP_COST.get(Terrain(t), 1.0) * diag
+                new_cost = base + step * diag
                 if new_cost < cost.get(ni, 1e18):
                     cost[ni] = new_cost
                     came[ni] = i

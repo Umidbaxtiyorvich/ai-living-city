@@ -29,6 +29,16 @@ from .jsonutil import dumps
 SPEEDS = (0, 1, 10, 60, 100, 360, 1440)
 BROADCAST_INTERVAL = 0.1
 TICK_SECONDS = MINUTES_PER_TICK * 60.0
+#: The 100× button is "a year a second": one game year (12 days) per real second.
+YEAR_SECONDS = DAYS_PER_YEAR * 24 * 3600.0
+#: Above this many simulated seconds per real second, people are moved once per
+#: tick instead of continuously — at a year a second nobody can see the steps.
+FAST_RATE = 3600.0
+
+
+def sim_rate(speed: int) -> float:
+    """Simulated seconds per real second for a speed button."""
+    return YEAR_SECONDS if speed == 100 else float(speed)
 TASHKENT = timezone(timedelta(hours=5))
 #: Real seconds between saves. Frequent enough that a deploy or crash loses
 #: at most a minute of history; the file is written atomically.
@@ -141,32 +151,51 @@ class CivRuntime:
 
     async def _loop(self) -> None:
         last = time.perf_counter()
+        last_broadcast = 0.0
         try:
             while True:
-                await asyncio.sleep(BROADCAST_INTERVAL)
+                rate = sim_rate(self.speed)
+                fast = rate > FAST_RATE
+                # In year-a-second mode the loop runs almost flat out and only
+                # broadcasts ten times a second.
+                await asyncio.sleep(0.004 if fast else BROADCAST_INTERVAL)
                 now = time.perf_counter()
                 elapsed = now - last
                 last = now
                 async with self._lock:
                     civ = self.civ
-                    self._debt += min(elapsed, 1.0) * self.speed
+                    self._debt += min(elapsed, 1.0) * rate
                     started = time.perf_counter()
                     steps = 0
-                    # Walk continuously; run a tick each time ten minutes have passed.
-                    while self._debt > 0 and time.perf_counter() - started < 0.07:
-                        to_tick = TICK_SECONDS - civ.subsecond
-                        chunk = min(self._debt, to_tick, 120.0)
-                        civ.move(chunk)
-                        self._debt -= chunk
-                        if chunk >= to_tick - 1e-6:
+                    if fast:
+                        civ.auto_move = True
+                        while self._debt >= TICK_SECONDS and time.perf_counter() - started < 0.09:
                             civ.step()
+                            self._debt -= TICK_SECONDS
                             steps += 1
-                    if self._debt > TICK_SECONDS * 4:
-                        self._debt = 0.0
+                        civ.auto_move = False
+                        # If the machine cannot keep up, run as fast as it can
+                        # rather than building an endless backlog.
+                        self._debt = min(self._debt, rate * 0.5)
+                    else:
+                        # Walk continuously; run a tick each time ten minutes have passed.
+                        while self._debt > 0 and time.perf_counter() - started < 0.07:
+                            to_tick = TICK_SECONDS - civ.subsecond
+                            chunk = min(self._debt, to_tick, 120.0)
+                            civ.move(chunk)
+                            self._debt -= chunk
+                            if chunk >= to_tick - 1e-6:
+                                civ.step()
+                                steps += 1
+                        if self._debt > TICK_SECONDS * 4:
+                            self._debt = 0.0
                     if steps:
                         self.tick_ms = (time.perf_counter() - started) * 1000 / steps
-                    payload = self._frame()
-                await self._broadcast(payload)
+                    due = now - last_broadcast >= BROADCAST_INTERVAL
+                    payload = self._frame() if due else None
+                if payload is not None:
+                    last_broadcast = now
+                    await self._broadcast(payload)
                 if time.time() - self._last_save_time >= SAVE_EVERY_SECONDS:
                     await self.save()
         except asyncio.CancelledError:

@@ -135,6 +135,7 @@ class Civilization:
         #: runtime instead calls `move()` many times a second.
         self.auto_move = True
         self.player_id: int | None = None
+        self._night_now = False
         self.petitions: dict[int, Petition] = {}
         self.next_petition = 1
         self.customs: list[Custom] = []
@@ -163,7 +164,11 @@ class Civilization:
         return self.hour >= 21.5 or self.hour < dawn
 
     def has(self, custom: str) -> bool:
-        return any(c.key == custom for c in self.customs)
+        # Asked tens of thousands of times a tick; the list is only ever appended to.
+        if len(self.customs) != getattr(self, "_custom_count", -1):
+            self._custom_keys = {c.key for c in self.customs}
+            self._custom_count = len(self.customs)
+        return custom in self._custom_keys
 
     @property
     def living(self) -> list[Person]:
@@ -319,6 +324,7 @@ class Civilization:
             self.move(MINUTES_PER_TICK * 60.0)
         self.tick += 1
         self.subsecond = 0.0
+        self._night_now = self.night
         for person in list(self.people.values()):
             if person.alive:
                 self._live(person)
@@ -335,6 +341,12 @@ class Civilization:
 
     def _live(self, p: Person) -> None:
         sleeping = p.task == "sleep" and not p.path
+        if sleeping and self._night_now and p.health > 30 and p.stage != "baby":
+            # Fast path for the third of the day everyone is asleep: just the body.
+            p.hunger = max(0.0, p.hunger - 0.12 * (1.0 if p.adult else 0.6))
+            p.energy = min(100.0, p.energy + 0.75)
+            p.task_ticks += 1
+            return
         child_rate = 0.35 if self.has("feed_children") else 0.6
         p.hunger = max(0.0, p.hunger - (0.12 if sleeping else 0.2) * (child_rate if not p.adult else 1.0))
         if sleeping:
@@ -415,10 +427,10 @@ class Civilization:
         if p.task == "petition":
             return False
         if p.task == "sleep":
-            return not self.night and p.energy > 70
+            return not self._night_now and p.energy > 70
         if p.task in ("migrate", "haul", "build", "eat"):
             return p.task_ticks > 200
-        if self.night and p.task not in ("sleep", "migrate"):
+        if self._night_now and p.task not in ("sleep", "migrate"):
             return True
         if p.hunger < 25 and p.task not in ("eat", "forage"):
             return True
@@ -453,7 +465,7 @@ class Civilization:
             self._go(p, "migrate", (settlement.x, settlement.y))
             return
 
-        if self.night or p.energy < 18:
+        if self._night_now or p.energy < 18:
             spot = self._bed_for(p, settlement)
             self._go(p, "sleep", spot)
             return
@@ -566,6 +578,11 @@ class Civilization:
                 start = near
         if math.hypot(tx - p.x, ty - p.y) < 0.8:
             p.path = []
+            return
+        if self.auto_move:
+            # Moved a whole tick at a time (headless, or a year a second):
+            # every walk ends within the tick, so nobody can see the route.
+            p.path = [(tx, ty)]
             return
         p.path = world.route(start, (tx, ty))
         if not p.path:
@@ -2168,6 +2185,7 @@ class Civilization:
         civ.saved_at = data.get("saved_at")
         if not civ.animals:
             civ.spawn_animals()
+        civ._night_now = civ.night
         return civ
 
 
