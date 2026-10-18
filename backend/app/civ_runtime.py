@@ -16,15 +16,27 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from datetime import datetime, timedelta, timezone
+
+from civ.catalog import BLUEPRINTS
 from civ.engine import TASK_LABELS, Civilization
-from civ.models import DAYS_PER_YEAR, TICKS_PER_DAY
+from civ.models import DAYS_PER_YEAR, MINUTES_PER_TICK, TICKS_PER_DAY
 
 from .jsonutil import dumps
 
-#: Simulation ticks per real second at 1× (one tick is ten simulated minutes).
-TICKS_PER_SECOND = 3.0
-SPEEDS = (0, 1, 2, 5, 10, 25, 50)
+#: 1× is real time: one simulated second per real second, the clock in step
+#: with Tashkent. The faster speeds are for watching generations pass.
+SPEEDS = (0, 1, 10, 60, 360, 1440)
 BROADCAST_INTERVAL = 0.1
+TICK_SECONDS = MINUTES_PER_TICK * 60.0
+TASHKENT = timezone(timedelta(hours=5))
+#: How much missed time a restarted server catches up on.
+MAX_CATCH_UP_SECONDS = 2 * 24 * 3600
+
+
+def tashkent_minutes() -> int:
+    now = datetime.now(TASHKENT)
+    return now.hour * 60 + now.minute
 
 
 def _save_path() -> Path:
@@ -60,12 +72,30 @@ class CivRuntime:
                 self.civ = None
         if self.civ is None:
             self._new_world()
+        else:
+            self.civ.ensure_player()
+            self._catch_up()
+        self.civ.auto_move = False
         self._last_save_day = self.civ.day
+
+    def _catch_up(self) -> None:
+        """Life went on while the server slept: replay the missed hours, up to two days."""
+        saved_at = getattr(self.civ, "saved_at", None)
+        if not saved_at:
+            return
+        missed = min(MAX_CATCH_UP_SECONDS, max(0.0, time.time() - saved_at))
+        ticks = int(missed // TICK_SECONDS)
+        self.civ.auto_move = True
+        for _ in range(ticks):
+            self.civ.step()
+        if ticks:
+            print(f"Server uxlagan paytdagi {ticks * MINUTES_PER_TICK // 60} soat hayot tiklandi", flush=True)
 
     def _new_world(self, seed: int | None = None) -> None:
         seed = seed if seed is not None else int(os.environ.get("WORLD_SEED", "0") or 0) or int(time.time()) % 100000
         self.civ = Civilization(seed=seed, size=int(os.environ.get("CIV_MAP_SIZE", "96")))
-        self.civ.genesis()
+        self.civ.genesis(start_minutes=tashkent_minutes())
+        self.civ.auto_move = False
         print(f"Yangi dunyo yaratildi (urug' {seed}): 10 kishi", flush=True)
 
     def start_loop(self) -> None:
@@ -86,6 +116,7 @@ class CivRuntime:
             return {"saved": False}
         async with self._lock:
             data = self.civ.snapshot()
+            data["saved_at"] = time.time()
         path = _save_path()
 
         def write() -> None:
@@ -113,15 +144,19 @@ class CivRuntime:
                 last = now
                 async with self._lock:
                     civ = self.civ
-                    self._debt += elapsed * TICKS_PER_SECOND * self.speed
+                    self._debt += min(elapsed, 1.0) * self.speed
                     started = time.perf_counter()
                     steps = 0
-                    # Never let the simulation eat the whole frame.
-                    while self._debt >= 1 and time.perf_counter() - started < 0.07:
-                        civ.step()
-                        self._debt -= 1
-                        steps += 1
-                    if self._debt > 50:
+                    # Walk continuously; run a tick each time ten minutes have passed.
+                    while self._debt > 0 and time.perf_counter() - started < 0.07:
+                        to_tick = TICK_SECONDS - civ.subsecond
+                        chunk = min(self._debt, to_tick, 120.0)
+                        civ.move(chunk)
+                        self._debt -= chunk
+                        if chunk >= to_tick - 1e-6:
+                            civ.step()
+                            steps += 1
+                    if self._debt > TICK_SECONDS * 4:
                         self._debt = 0.0
                     if steps:
                         self.tick_ms = (time.perf_counter() - started) * 1000 / steps
@@ -142,6 +177,9 @@ class CivRuntime:
             "people": [p.compact() for p in civ.people.values() if p.alive],
             "stats": {**civ.stats(), "tick_ms": round(self.tick_ms, 2)},
             "settlements": civ.settlements_payload(),
+            "animals": [a.compact() for a in civ.animals.values()],
+            "player_id": civ.player_id,
+            "player_auto": bool(civ.player.auto) if civ.player else False,
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -158,6 +196,14 @@ class CivRuntime:
             "looks": [p.looks() for p in civ.people.values() if p.alive],
             "chronicle": civ.chronicle_payload(60),
             "labels": TASK_LABELS,
+            "blueprints": [
+                {
+                    "kind": bp.kind, "name": bp.name, "wood": bp.wood, "stone": bp.stone,
+                    "w": bp.width, "h": bp.height, "category": bp.category,
+                    "known": all(r in civ.known for r in bp.requires),
+                }
+                for bp in BLUEPRINTS
+            ],
         }
 
     def _frame(self) -> dict[str, Any]:
@@ -227,6 +273,21 @@ class CivRuntime:
         detail["home"] = home.blueprint.name if home else None
         detail["alive"] = person.alive
         return detail
+
+    async def player(self, action: str, **args: Any) -> dict:
+        async with self._lock:
+            civ = self.civ
+            if action == "goto":
+                return {"reply": civ.player_goto(float(args["x"]), float(args["y"]))}
+            if action == "do":
+                return {"reply": civ.player_do(str(args["what"]))}
+            if action == "build":
+                return civ.player_build(str(args["kind"]), int(args["x"]), int(args["y"]), bool(args.get("creative")))
+            if action == "talk":
+                return {"reply": civ.player_talk(int(args["id"]))}
+            if action == "propose":
+                return {"reply": civ.player_propose(int(args["id"]))}
+        return {"reply": "Noma'lum buyruq"}
 
     async def reset(self) -> dict:
         async with self._lock:

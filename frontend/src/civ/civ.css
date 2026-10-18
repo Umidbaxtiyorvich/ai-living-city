@@ -167,3 +167,41 @@
   .civ-top { gap: 8px; padding: 6px 8px; width: calc(100% - 24px); justify-content: space-between; }
   .civ-speeds button { padding: 4px 6px; }
 }
+
+/* -- the player ------------------------------------------------------------ */
+.civ-player {
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  width: min(560px, calc(100% - 24px));
+  padding: 10px 12px;
+}
+.civ-player-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.civ-player-head span { flex: 1; color: #e8c66a; font-size: 12px; }
+.civ-me { font-weight: 600; }
+.civ-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.civ-actions button { font-size: 12px; padding: 5px 8px; }
+.civ-build { margin-top: 8px; max-height: 260px; overflow: auto; }
+.civ-build-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 5px; }
+.civ-build-grid button { text-align: left; display: grid; gap: 2px; }
+.civ-build-grid strong { font-size: 12px; }
+.civ-build-grid span { font-size: 10px; color: #a8a294; }
+.civ-creative { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #c9c2b2; }
+.civ-message { margin: 8px 0 0; font-size: 12px; color: #cfe3ff; }
+.civ-hint { margin: 6px 0 0; font-size: 10px; color: #8e8878; }
+.civ-inspector { bottom: auto; top: 84px; left: auto; right: 324px; }
+@media (max-width: 760px) {
+  .civ-inspector { top: auto; right: auto; left: 12px; bottom: 190px; }
+  .civ-player { bottom: 8px; }
+}
+
+.civ-stats-toggle { padding: 5px 8px; }
+@media (max-width: 760px) {
+  .civ-top { flex-wrap: wrap; }
+  .civ-title strong { font-size: 13px; }
+  .civ-speeds { overflow-x: auto; max-width: 100%; }
+  .civ-actions { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+  .civ-actions button { flex: 0 0 auto; }
+  .civ-player .civ-hint { display: none; }
+  .civ-left { top: 110px; max-height: 45%; z-index: 2; }
+}

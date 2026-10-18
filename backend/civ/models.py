@@ -15,8 +15,8 @@ DAYS_PER_YEAR = 12
 ADULT_AGE = 16
 ELDER_AGE = 55
 
-#: Tiles walked per tick.
-WALK_SPEED = 0.55
+#: A tile is about four metres; people walk at a real 1.3 m/s.
+WALK_TILES_PER_SECOND = 0.33
 
 
 @dataclass
@@ -82,6 +82,12 @@ class Person:
     last_birth_day: int = -9999
     discoveries: int = 0
     buildings_built: int = 0
+    #: The human player's own character.
+    player: bool = False
+    #: When True even the player's character looks after itself.
+    auto: bool = True
+    #: Simulated second before which an idle person will not reconsider.
+    rest_until: float = 0.0
 
     # -- derived -----------------------------------------------------------
 
@@ -148,6 +154,7 @@ class Person:
             self.stage,
             self.gender[0],
             self.carry_kind if self.carry > 0 else "",
+            1 if self.player else 0,
         ]
 
     def looks(self) -> dict:
@@ -190,6 +197,11 @@ class Person:
             "settlement_id": self.settlement_id,
             "discoveries": self.discoveries,
             "buildings_built": self.buildings_built,
+            "player": self.player,
+            "auto": self.auto,
+            "relationships": {
+                str(k): round(v) for k, v in sorted(self.relationships.items(), key=lambda kv: -kv[1])[:6]
+            },
         }
 
 
@@ -290,3 +302,20 @@ class Settlement:
             "storage": self.storage.as_dict(),
             "leader_id": self.leader_id,
         }
+
+
+@dataclass
+class Animal:
+    id: int
+    kind: str
+    x: float
+    y: float
+    tx: float
+    ty: float
+    #: Simulated seconds left to graze before moving on.
+    wait: float = 0.0
+    herd: int = 0
+
+    def compact(self) -> list:
+        moving = 1 if self.wait <= 0 and (abs(self.tx - self.x) + abs(self.ty - self.y)) > 0.05 else 0
+        return [self.id, self.kind, round(self.x, 2), round(self.y, 2), moving]

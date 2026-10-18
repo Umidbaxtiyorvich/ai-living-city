@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
-import { civPost, useCiv } from "./store";
+import { act, civPost, useCiv } from "./store";
 
-const SPEEDS = [0, 1, 2, 5, 10, 25, 50];
+/** 1× is real life; the rest are for watching years go by. */
+const SPEEDS: [number, string][] = [
+  [0, "⏸"],
+  [1, "Haqiqiy"],
+  [10, "10×"],
+  [60, "1 daq/s"],
+  [360, "6 daq/s"],
+  [1440, "1 kun/min"],
+];
 
 const KIND_ICON: Record<string, string> = {
   era: "🔥",
@@ -46,6 +54,9 @@ interface PersonDetail {
   goals: { kind: string; text: string; progress: number }[];
   memories: string[];
   partner: string | null;
+  partner_id: number | null;
+  player: boolean;
+  auto: boolean;
   children: number;
   settlement: string | null;
   home: string | null;
@@ -77,6 +88,7 @@ function Inspector() {
   const buildings = useCiv((s) => s.buildings);
   const setFollow = useCiv((s) => s.setFollow);
   const follow = useCiv((s) => s.follow);
+  const playerId = useCiv((s) => s.playerId);
   const [detail, setDetail] = useState<PersonDetail | null>(null);
 
   useEffect(() => {
@@ -157,6 +169,14 @@ function Inspector() {
           </ul>
         </>
       )}
+      {playerId != null && !detail.player && (
+        <div className="civ-row">
+          <button onClick={() => act({ action: "talk", id: detail.id })}>💬 Gaplashish</button>
+          {detail.gender === "female" && detail.age >= 16 && !detail.partner && (
+            <button onClick={() => act({ action: "propose", id: detail.id })}>💍 Turmush taklifi</button>
+          )}
+        </div>
+      )}
       <button className="civ-wide" onClick={() => setFollow(follow === detail.id ? null : detail.id)}>
         {follow === detail.id ? "Kuzatishni to'xtatish" : "Kuzatish"}
       </button>
@@ -175,6 +195,8 @@ export function CivHud() {
   const select = useCiv((s) => s.select);
   const people = useCiv((s) => s.people);
   const [busy, setBusy] = useState(false);
+  // On a phone the stats panel would cover the world; it opens on demand.
+  const [showStats, setShowStats] = useState(() => window.innerWidth > 760);
 
   if (!stats || !time) return null;
 
@@ -196,16 +218,19 @@ export function CivHud() {
           </span>
         </div>
         <div className="civ-speeds">
-          {SPEEDS.map((value) => (
+          {SPEEDS.map(([value, label]) => (
             <button key={value} className={speed === value ? "on" : ""} onClick={() => civPost("/api/civ/speed", { value })}>
-              {value === 0 ? "⏸" : `${value}×`}
+              {label}
             </button>
           ))}
         </div>
+        <button className="civ-stats-toggle" onClick={() => setShowStats(!showStats)}>
+          {showStats ? "✕" : "📊"}
+        </button>
         {!connected && <span className="civ-offline">aloqa yo'q…</span>}
       </header>
 
-      <aside className="civ-panel civ-left">
+      <aside className="civ-panel civ-left" style={{ display: showStats ? undefined : "none" }}>
         <h2>Xalq</h2>
         <div className="civ-stats">
           <div><b>{stats.population}</b><span>aholi</span></div>
@@ -276,6 +301,107 @@ export function CivHud() {
       </aside>
 
       <Inspector />
+      <PlayerPanel />
+    </div>
+  );
+}
+
+const ACTIONS: [string, string][] = [
+  ["forage", "🍎 Meva terish"],
+  ["chop", "🪓 O'tin kesish"],
+  ["quarry", "⛏️ Tosh qazish"],
+  ["build", "🔨 Qurish"],
+  ["farm", "🌾 Dehqonchilik"],
+  ["eat", "🍲 Ovqatlanish"],
+  ["sleep", "😴 Uxlash"],
+  ["think", "💡 O'ylash"],
+];
+
+function PlayerPanel() {
+  const playerId = useCiv((s) => s.playerId);
+  const row = useCiv((s) => s.people.find((p) => p[0] === s.playerId));
+  const labels = useCiv((s) => s.labels);
+  const blueprints = useCiv((s) => s.blueprints);
+  const placing = useCiv((s) => s.placing);
+  const creative = useCiv((s) => s.creative);
+  const message = useCiv((s) => s.message);
+  const setPlacing = useCiv((s) => s.setPlacing);
+  const setCreative = useCiv((s) => s.setCreative);
+  const select = useCiv((s) => s.select);
+  const setFollow = useCiv((s) => s.setFollow);
+  const [menu, setMenu] = useState(false);
+  const auto = useCiv((s) => s.playerAuto);
+  if (playerId == null) return null;
+  const homes = blueprints.filter((b) => b.category === "home");
+  const others = blueprints.filter((b) => b.category !== "home");
+  const choose = (kind: string) => {
+    setPlacing(kind);
+    setMenu(false);
+    useCiv.getState().say("Qurish uchun yerni bosing (bekor qilish — Esc)");
+  };
+  return (
+    <div className="civ-panel civ-player">
+      <div className="civ-player-head">
+        <button
+          className="civ-me"
+          onClick={() => {
+            select(playerId);
+            setFollow(playerId);
+          }}
+        >
+          🧍 Men
+        </button>
+        <span>{row ? labels[row[3]] ?? row[3] : ""}</span>
+        <button
+          className={auto ? "on" : ""}
+          title="Qahramoningiz o'zi yashasin"
+          onClick={() => act({ action: "do", what: "auto" })}
+        >
+          {auto ? "Avto ✓" : "Avto"}
+        </button>
+      </div>
+      <div className="civ-actions">
+        {ACTIONS.map(([what, label]) => (
+          <button key={what} onClick={() => act({ action: "do", what })}>
+            {label}
+          </button>
+        ))}
+        <button className={menu || placing ? "on" : ""} onClick={() => (placing ? setPlacing(null) : setMenu(!menu))}>
+          {placing ? "✖ Bekor" : "🏗️ Yaratish"}
+        </button>
+      </div>
+      {menu && (
+        <div className="civ-build">
+          <label className="civ-creative">
+            <input type="checkbox" checked={creative} onChange={(e) => setCreative(e.target.checked)} /> Darhol qurish
+            (resurssiz)
+          </label>
+          <h4>Uylar</h4>
+          <div className="civ-build-grid">
+            {homes.map((b) => (
+              <button key={b.kind} onClick={() => choose(b.kind)}>
+                <strong>{b.name}</strong>
+                <span>
+                  🪵{b.wood} 🪨{b.stone} {b.known ? "" : "· hali kashf qilinmagan"}
+                </span>
+              </button>
+            ))}
+          </div>
+          <h4>Boshqa binolar</h4>
+          <div className="civ-build-grid">
+            {others.map((b) => (
+              <button key={b.kind} onClick={() => choose(b.kind)}>
+                <strong>{b.name}</strong>
+                <span>
+                  🪵{b.wood} 🪨{b.stone}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {message && <p className="civ-message">{message}</p>}
+      <p className="civ-hint">Yurish: WASD yoki yerni bosing · Kamera: sichqoncha</p>
     </div>
   );
 }

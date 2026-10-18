@@ -18,5 +18,8 @@ backend/workshop/*.py
 # Human models are downloaded (npm run fetch:humans) or added locally, not committed.
 frontend/public/models/humans/*
 !frontend/public/models/humans/.gitkeep
+# The civilization's realistic people (CC0, optimised) are part of the app.
+!frontend/public/models/humans/sam.glb
+!frontend/public/models/humans/maya.glb
 civ_world.json
 civ_world.tmp

@@ -189,3 +189,25 @@ async def civ_save() -> dict:
 @router.post("/civ/reset")
 async def civ_reset() -> dict:
     return await civ_runtime.reset()
+
+
+from pydantic import BaseModel  # noqa: E402
+
+
+class PlayerBody(BaseModel):
+    action: str
+    x: float | None = None
+    y: float | None = None
+    what: str | None = None
+    kind: str | None = None
+    creative: bool = False
+    id: int | None = None
+
+
+@router.post("/civ/player")
+async def civ_player(body: PlayerBody) -> dict:
+    args = {k: v for k, v in body.model_dump().items() if v is not None and k != "action"}
+    try:
+        return await civ_runtime.player(body.action, **args)
+    except (KeyError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=f"Buyruq to'liq emas: {error}") from error
