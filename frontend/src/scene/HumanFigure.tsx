@@ -27,6 +27,7 @@ export function HumanFigure({
   selected,
   president = false,
   showLabel,
+  thought,
   onSelect,
 }: {
   id: number;
@@ -42,6 +43,7 @@ export function HumanFigure({
   selected: boolean;
   president?: boolean;
   showLabel: boolean;
+  thought?: string;
   onSelect: (id: number) => void;
 }) {
   const look = useMemo(
@@ -209,6 +211,7 @@ export function HumanFigure({
           <div className="agent-label">
             <strong>{name}</strong>
             <span>{line}</span>
+            {thought && selected ? <em>💭 {thought}</em> : null}
           </div>
         </Html>
       )}

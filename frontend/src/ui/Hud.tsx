@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { fetchAgent, postAssignment, postJson } from "../net/client";
 import { useWorld, type FollowTarget } from "../store/world";
 import { buildingLabel, buildingStatusLabel, professionLabel } from "./labels";
-import type { AgentView, LedgerItem } from "../types";
+import type { AgentView, LedgerItem, MindDetail, PresidentMind, SocietyView } from "../types";
 
 const SPEEDS = [0, 1, 2, 5, 10, 50, 100];
 
@@ -28,6 +28,7 @@ const ACTIVITY: Record<string, string> = {
   socialising: "suhbat",
   at_hospital: "shifoxona",
   seeking_job: "ish qidirmoqda",
+  studying: "o'qimoqda",
   going_home: "uyga",
   reports: "hisobot",
   meetings: "yig'ilish",
@@ -209,6 +210,13 @@ export function Hud() {
             </button>
           </>
         )}
+        {dashboard.society && (
+          <SocietyPanel
+            society={dashboard.society}
+            presidentMind={dashboard.president_mind ?? null}
+            onPick={(id) => followTarget(id)}
+          />
+        )}
         {decision && (
           <div className="decision">
             <div className="muted">Joriy qaror · {decision.status}</div>
@@ -375,7 +383,7 @@ function Inspector({
 }: {
   agent?: AgentView;
   president: { name: string; activity: string; approval_rating: number } | null;
-  building?: { type: string; status: string; residents: number; staff: number };
+  building?: { type: string; status: string; residents: number; staff: number; condition?: number; renovations?: number };
   detail: Record<string, unknown> | null;
   onFollow: (id: number) => void;
   onOrder: (text: string) => void;
@@ -401,6 +409,7 @@ function Inspector({
         {agent.desk && <p className="muted">Stol: {agent.desk}</p>}
         <p>{ACTIVITY[agent.activity] ?? agent.activity}</p>
         <p>Mamnunlik {agent.happiness.toFixed(0)}</p>
+        <MindView mind={(detail?.mind ?? null) as MindDetail | null} fallback={agent.thought} />
         {agent.player_order && (
           <p className="muted">
             Buyruq: {ACTIVITY[agent.player_order] ?? agent.player_order}
@@ -442,10 +451,101 @@ function Inspector({
         <p>
           Aholi {building.residents} · xodim {building.staff}
         </p>
+        {building.condition != null && (
+          <Bar label={`Holati${building.renovations ? ` · ${building.renovations}× ta'mir` : ""}`} value={building.condition / 100} />
+        )}
       </div>
     );
   }
   return <p className="muted">Agent yoki binoni bosing.</p>;
+}
+
+const GOAL_ICON: Record<string, string> = {
+  career: "💼",
+  education: "🎓",
+  wealth: "💰",
+  family: "💍",
+  friendship: "🤝",
+  home: "🏠",
+  health: "❤️",
+  mastery: "🛠️",
+};
+
+const PREFERENCE_LABEL: Record<string, string> = {
+  leisure: "sayr",
+  socialising: "do'stlar",
+  shopping: "xarid",
+  studying: "o'qish",
+};
+
+function MindView({ mind, fallback }: { mind: MindDetail | null; fallback?: string }) {
+  const thought = mind?.thought || fallback;
+  if (!mind) {
+    return thought ? <p className="thought">💭 {thought}</p> : null;
+  }
+  const favourite = Object.entries(mind.preferences).sort((a, b) => b[1] - a[1])[0];
+  return (
+    <div className="mind">
+      {thought && <p className="thought">💭 {thought}</p>}
+      <Bar label={`Ong darajasi`} value={mind.awareness / 100} />
+      {mind.goals.length > 0 && (
+        <ul className="goals">
+          {mind.goals.map((goal) => (
+            <li key={goal.kind}>
+              <span>
+                {GOAL_ICON[goal.kind] ?? "•"} {goal.text}
+              </span>
+              <i style={{ width: `${Math.round(goal.progress * 100)}%` }} />
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="muted">
+        Yutuqlar {mind.achievements} · o'qigan {Math.round(mind.study_hours)} soat · donolik {mind.wisdom.toFixed(0)}
+        {favourite && favourite[1] > 0.05 ? ` · sevimli: ${PREFERENCE_LABEL[favourite[0]] ?? favourite[0]}` : ""}
+      </p>
+    </div>
+  );
+}
+
+function SocietyPanel({
+  society,
+  presidentMind,
+  onPick,
+}: {
+  society: SocietyView;
+  presidentMind: PresidentMind | null;
+  onPick: (id: number) => void;
+}) {
+  return (
+    <>
+      <h3>Jamiyat ongi</h3>
+      <Stat label="O'rtacha ong" value={`${society.awareness.toFixed(1)}/100`} />
+      <Stat label="Erishilgan maqsadlar" value={String(society.achievements)} />
+      <Stat label="O'qiyotganlar" value={pct(society.studying_share)} />
+      <Stat label="Shahar yangilanishi" value={`${society.renewals} ta`} />
+      {society.voice.slice(0, 4).map((item) => (
+        <Bar key={item.wish} label={item.text} value={item.strength} />
+      ))}
+      {presidentMind && (
+        <div className="decision">
+          <div className="muted">
+            Prezident tafakkuri · {presidentMind.lessons_learned} saboq · aql {presidentMind.intelligence.toFixed(0)}
+          </div>
+          {presidentMind.thought && <div>💭 {presidentMind.thought}</div>}
+        </div>
+      )}
+      {society.thoughts.length > 0 && (
+        <ul className="thoughts">
+          {society.thoughts.slice(0, 3).map((item) => (
+            <li key={item.id} onClick={() => onPick(item.id)}>
+              <strong>{item.name}:</strong> {item.thought}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
 }
 
 function LedgerList({ items }: { items: LedgerItem[] }) {

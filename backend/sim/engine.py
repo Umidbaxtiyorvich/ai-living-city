@@ -15,6 +15,8 @@ from __future__ import annotations
 import time
 
 from .agents import behavior
+from .ai import mind as minds
+from .ai.voice import listen
 from .agents.generator import FEMALE_NAMES, MALE_NAMES, SURNAMES
 from .agents.models import Activity, Agent, DetailLevel, Gender, LifeStage
 from .buildings.catalog import CATALOG, BuildingType
@@ -65,6 +67,7 @@ from .weather.model import roll_weather
 from .urban.district_generator import create_district_at_distance, zone_label
 from .urban.transport import BusStop
 from .urban.expansion import expand_map_with_infrastructure
+from .urban import renewal
 from .urban.zones import CityZone
 from .world.plans import DistrictPlan
 from .world.tiles import District, TileType
@@ -235,6 +238,13 @@ class Engine:
                         severity=Severity.WARNING,
                     )
 
+        # The founding village is not new: its buildings are of mixed age, so
+        # the renewal office has real work to do as the city grows.
+        wear_rng = state.rng.stream("renewal")
+        for building in state.buildings.values():
+            if building.type not in renewal.PROTECTED:
+                building.condition = round(wear_rng.number(40.0, 95.0), 1)
+
         state.invalidate_paths()
         self._install_president(centre)
 
@@ -400,6 +410,11 @@ class Engine:
 
         self._age_population()
         self._run_relationships()
+        self._reflect_citizens()
+
+        renewal.wear(state.buildings)
+        if day > 0 and day % renewal.RENEWAL_INTERVAL_DAYS == 0:
+            self._renew_city()
 
         level = state.refresh_city_level()
         if level is not None:
@@ -417,6 +432,137 @@ class Engine:
             state.president.approval_rating = approval_from(state.stats, state.economy)
 
         self._advance_cabinet_tasks()
+
+    # -- minds -------------------------------------------------------------
+
+    def _city_view(self) -> minds.CityView:
+        state = self.state
+        open_types = [b.type for b in state.buildings.values() if b.is_open]
+        return minds.CityView(
+            day=state.day,
+            tick=state.tick,
+            has_hospital=any(t in (BuildingType.HOSPITAL, BuildingType.CLINIC) for t in open_types),
+            has_school=BuildingType.SCHOOL in open_types,
+            has_university=BuildingType.UNIVERSITY in open_types,
+            parks=sum(1 for t in open_types if t is BuildingType.PARK),
+            shops=sum(1 for t in open_types if t in (BuildingType.SHOP, BuildingType.MARKET)),
+            culture=sum(
+                1 for t in open_types
+                if t in (BuildingType.CINEMA, BuildingType.SPORT_CENTER, BuildingType.ZOO)
+            ),
+            population=state.population,
+        )
+
+    def _reflect_citizens(self) -> None:
+        """Every citizen looks back on its day; the city hears the result."""
+        state = self.state
+        view = self._city_view()
+        announced = 0
+        for agent in state.living_agents:
+            outcome = minds.reflect(agent, view)
+            if outcome.graduated is not None:
+                self._announce_graduation(agent, outcome.graduated)
+            # The log shows a few milestones a day, not every small win.
+            if outcome.achieved and announced < 3:
+                announced += 1
+                goal = outcome.achieved[0]
+                state.events.record(
+                    state.tick, state.day, EventType.CITIZEN_MILESTONE,
+                    f"{agent.name} maqsadiga erishdi: {minds.GOAL_TEXT[goal]}",
+                    agent_ids=[agent.id],
+                )
+        state.society = listen(state.agents.values())
+        # Reflection moves feelings (an achieved goal is a happy day), so the
+        # figures the president and dashboard read must follow it.
+        state.refresh_stats()
+
+    def _announce_graduation(self, agent: Agent, level) -> None:
+        state = self.state
+        state.events.record(
+            state.tick, state.day, EventType.CITIZEN_MILESTONE,
+            f"{agent.name} mustaqil o'qib, yangi ma'lumot darajasiga yetdi ({level.name.lower()})",
+            severity=Severity.NOTICE,
+            agent_ids=[agent.id],
+        )
+
+    # -- renewal -----------------------------------------------------------
+
+    def _renew_city(self) -> None:
+        """Weekly: repair or redevelop the most worn building the city can afford."""
+        state = self.state
+        stats = state.stats
+        centre = (state.grid.width // 2, state.grid.height // 2)
+        project = renewal.plan(
+            state.buildings,
+            unlocked=state.unlocked,
+            spendable=self.brain.spendable_budget(state.economy) * 0.5,
+            housing_shortage=stats.housing_shortage,
+            land_available=state.grid.find_free_plot(3, 3, near=centre) is not None,
+        )
+        if project is None:
+            return
+        building = state.buildings[project.building_id]
+        old_label = building_label(building.type)
+
+        if project.kind == "repair":
+            if not state.economy.spend(project.cost, "renewal"):
+                return
+            building.condition = 100.0
+            building.renovations += 1
+            state.renewals += 1
+            state.events.record(
+                state.tick, state.day, EventType.CITY_RENEWAL,
+                f"{old_label} ta'mirlandi",
+                building_ids=[building.id],
+            )
+            return
+
+        new_type = project.new_type
+        if new_type is None:
+            return
+        anchor = (building.x, building.y)
+        displaced = list(building.residents)
+        state.construction.demolish(building, grid=state.grid, agents=state.agents)
+        result = state.construction.request(
+            new_type, grid=state.grid, economy=state.economy,
+            buildings=state.buildings, near=anchor,
+        )
+        if not result.approved:
+            # Never leave a hole: put the old building back on its plot.
+            fallback = state.construction.request(
+                building.type, grid=state.grid, economy=state.economy,
+                buildings=state.buildings, near=anchor,
+            )
+            state.invalidate_paths()
+            if fallback.approved:
+                state.events.record(
+                    state.tick, state.day, EventType.CITY_RENEWAL,
+                    f"Eskirgan {old_label} qayta qurilmoqda",
+                    building_ids=[fallback.building.id],
+                )
+            return
+
+        state.renewals += 1
+        state.invalidate_paths()
+        for agent_id in displaced:
+            agent = state.agents.get(agent_id)
+            if agent is not None and agent.alive:
+                agent.memory.record(
+                    state.tick, MemoryKind.CITY,
+                    f"Eski uyimiz buzilib, o'rniga {building_label(new_type)} qurilmoqda",
+                    importance=0.6,
+                )
+        text = f"Shahar yangilanmoqda: eski {old_label} o'rniga {building_label(new_type)} qurilmoqda"
+        state.events.record(
+            state.tick, state.day, EventType.CITY_RENEWAL, text,
+            severity=Severity.NOTICE,
+            building_ids=[result.building.id],
+        )
+        if state.president is not None:
+            state.president.memory.record(
+                state.tick, MemoryKind.DEVELOPMENT, text, importance=0.6,
+                building_id=result.building.id,
+            )
 
     def _age_population(self) -> None:
         """Ages everyone by a day, graduating and retiring where due."""
@@ -608,21 +754,25 @@ class Engine:
             if not agent.alive:
                 continue
 
+            graduated = None
             if agent.detail is DetailLevel.FULL:
-                behavior.step_agent(
+                graduated = behavior.step_agent(
                     agent, now=now, minutes=minutes, grid=state.grid,
                     buildings=state.buildings, paths=state.paths, tick=tick,
                     laws=laws,
                 )
             elif agent.detail is DetailLevel.REDUCED:
                 if reduced_turn:
-                    behavior.step_agent(
+                    graduated = behavior.step_agent(
                         agent, now=now, minutes=minutes * 4, grid=state.grid,
                         buildings=state.buildings, paths=state.paths, tick=tick,
                         laws=laws,
                     )
             else:
                 behavior.step_statistically(agent, minutes=minutes)
+
+            if graduated is not None:
+                self._announce_graduation(agent, graduated)
 
             # Weather is felt only outdoors, and only by agents being simulated
             # in detail; statistical agents are assumed to be sheltered.
@@ -686,6 +836,12 @@ class Engine:
 
         cost = self.brain.estimated_cost(chosen)
         affordable = cost <= self.brain.spendable_budget(state.economy)
+        trust = president.weight_for(chosen.code)
+        president.thought = (
+            f"{chosen.description}. Qaror: {chosen.action.describe()}"
+            + ("" if affordable else " — lekin hozircha mablag' yetmaydi")
+            + f". Tajribamga ko'ra ishonch: {trust:.0%}."
+        )
 
         # A problem the city cannot pay for is worth recording once a day, not
         # at every decision slot — otherwise the decision history becomes an
@@ -759,6 +915,9 @@ class Engine:
                 employed=state.stats.employed,
             )["shortage"],
             transit_route_count=len(state.urban.transport.routes),
+            voice=dict(state.society.voice),
+            responsiveness=state.president.responsiveness if state.president else 0.5,
+            weights=dict(state.president.policy_weights) if state.president else {},
         )
 
     def _execute(self, action: Action, decision: Decision) -> bool:

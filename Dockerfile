@@ -5,6 +5,7 @@ WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci --omit=dev 2>/dev/null || npm install
 COPY frontend/ ./
+RUN npm run fetch:humans || echo "human models not fetched; procedural figures will be used"
 RUN npm run build
 
 FROM python:3.12-slim AS backend
@@ -16,7 +17,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=8000 \
     MAP_SIZE=80 \
     DEFAULT_SPEED=1 \
-    DATABASE_URL=sqlite:////data/city.db
+    DATABASE_URL=sqlite:////data/city.db \
+    CIV_SAVE_PATH=/data/civ_world.json \
+    WORLD_MODE=civ
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libpq5 \

@@ -57,6 +57,8 @@ class ConcernCode(StrEnum):
     PARKING_SHORTAGE = "parking_shortage"
     TRANSIT_SHORTAGE = "transit_shortage"
     PLAYER_DECREE = "player_decree"
+    #: What the citizens' minds collectively ask for (see `sim.ai.voice`).
+    CITIZEN_VOICE = "citizen_voice"
 
 
 class ActionKind(StrEnum):
@@ -233,6 +235,16 @@ class President:
     #: Set while a crisis overrides the daily routine.
     emergency: str | None = None
 
+    #: Learned trust in acting on each concern code, 0.4..1.8. Starts neutral
+    #: and moves with every reviewed outcome — the president's policy memory.
+    policy_weights: dict[str, float] = field(default_factory=dict)
+    lessons_learned: int = 0
+    #: How much the citizens' collective voice sways the agenda, 0..1. Grows
+    #: when acting on the voice raises happiness.
+    responsiveness: float = 0.5
+    #: Latest one-line reasoning, shown on the dashboard.
+    thought: str = ""
+
     @property
     def in_emergency(self) -> bool:
         return self.emergency is not None
@@ -245,6 +257,22 @@ class President:
 
     def decisions_for(self, code: ConcernCode) -> list[Decision]:
         return [d for d in self.decisions if d.concern.code is code]
+
+    def weight_for(self, code: "ConcernCode | str") -> float:
+        return self.policy_weights.get(str(code), 1.0)
+
+    def mind_state(self) -> dict:
+        return {
+            "intelligence": round(self.intelligence, 1),
+            "leadership": round(self.leadership, 1),
+            "lessons_learned": self.lessons_learned,
+            "responsiveness": round(self.responsiveness, 2),
+            "thought": self.thought,
+            "policy_weights": {
+                key: round(value, 2)
+                for key, value in sorted(self.policy_weights.items(), key=lambda kv: -kv[1])
+            },
+        }
 
     def public_state(self) -> dict:
         return {
@@ -261,4 +289,5 @@ class President:
             "emergency": self.emergency,
             "avatar_seed": self.avatar_seed,
             "appearance": self.appearance,
+            "thought": self.thought,
         }

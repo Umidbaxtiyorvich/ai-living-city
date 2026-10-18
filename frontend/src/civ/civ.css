@@ -1,0 +1,169 @@
+.civ-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: #f1ece2;
+  font-size: 13px;
+}
+.civ-panel {
+  pointer-events: auto;
+  position: absolute;
+  background: rgba(14, 18, 24, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+}
+.civ-panel h2 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #e8c66a;
+}
+.civ-panel h3 {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #e8c66a;
+}
+.civ-panel h4 {
+  margin: 10px 0 4px;
+  font-size: 11px;
+  color: #c9b98a;
+}
+.civ-panel button {
+  background: rgba(255, 255, 255, 0.07);
+  color: #f1ece2;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+.civ-panel button:hover { background: rgba(255, 255, 255, 0.14); }
+.civ-panel button.on { background: #e8c66a; color: #1a1408; border-color: #e8c66a; }
+.civ-panel button:disabled { opacity: 0.5; }
+.muted { color: #a8a294; }
+.small { font-size: 12px; line-height: 1.5; }
+
+.civ-top {
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 8px 14px;
+}
+.civ-title { display: flex; flex-direction: column; }
+.civ-title strong { color: #e8c66a; font-size: 15px; }
+.civ-title span { font-size: 12px; color: #c9c2b2; }
+.civ-speeds { display: flex; gap: 4px; }
+.civ-speeds button { padding: 5px 9px; }
+.civ-offline { color: #ff8a7a; font-size: 12px; }
+
+.civ-left {
+  top: 12px;
+  left: 12px;
+  width: 260px;
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  padding: 14px;
+}
+.civ-right {
+  top: 84px;
+  right: 12px;
+  width: 300px;
+  max-height: calc(100% - 96px);
+  overflow: auto;
+  padding: 14px;
+}
+.civ-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.civ-stats div {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 6px;
+  text-align: center;
+}
+.civ-stats b { display: block; font-size: 17px; }
+.civ-stats span { font-size: 10px; color: #a8a294; }
+
+.civ-bar { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 11px; }
+.civ-bar span { width: 64px; color: #c9c2b2; }
+.civ-bar i { flex: 1; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 4px; overflow: hidden; }
+.civ-bar b { display: block; height: 100%; border-radius: 4px; }
+
+.civ-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.civ-chips span { background: rgba(232, 198, 106, 0.14); color: #f0d68a; border-radius: 6px; padding: 2px 7px; font-size: 11px; }
+
+.civ-places { list-style: none; margin: 0; padding: 0; }
+.civ-places li {
+  padding: 7px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: grid;
+  gap: 1px;
+}
+.civ-places li:hover { background: rgba(255, 255, 255, 0.06); }
+.civ-places strong { font-size: 13px; }
+.civ-places span { font-size: 11px; color: #c9c2b2; }
+.civ-places em { font-size: 11px; color: #a8a294; font-style: normal; }
+.civ-row { display: flex; gap: 6px; margin-top: 12px; }
+.civ-row button { flex: 1; }
+
+.civ-chronicle { list-style: none; margin: 0; padding: 0; }
+.civ-chronicle li { padding: 6px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06); line-height: 1.4; }
+.civ-chronicle li span { display: block; font-size: 10px; color: #8e8878; }
+.civ-chronicle .k-discovery { color: #ffd77a; }
+.civ-chronicle .k-settlement { color: #8fd3ff; }
+.civ-chronicle .k-wedding { color: #ffb3c8; }
+.civ-chronicle .k-birth { color: #b8f0c8; }
+.civ-chronicle .k-death { color: #b4aca0; }
+.civ-chronicle .k-politics { color: #e8c66a; }
+
+.civ-inspector {
+  left: 284px;
+  bottom: 12px;
+  width: 300px;
+  max-height: 62%;
+  overflow: auto;
+  padding: 14px;
+}
+.civ-inspector h3 { margin: 0; text-transform: none; letter-spacing: 0; font-size: 16px; color: #fff; }
+.civ-inspector p { margin: 4px 0; }
+.civ-doing { color: #e8c66a; }
+.civ-thought { font-style: italic; color: #cfe3ff; }
+.civ-goals, .civ-memories { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+.civ-goals li { position: relative; padding: 3px 0 6px; }
+.civ-goals li i { position: absolute; left: 0; bottom: 1px; height: 2px; background: #6fd39a; border-radius: 2px; }
+.civ-memories li { color: #c9c2b2; padding: 2px 0; }
+.civ-wide { width: 100%; margin-top: 10px; }
+
+.civ-tag, .civ-place {
+  pointer-events: none;
+  white-space: nowrap;
+  text-align: center;
+  background: rgba(14, 18, 24, 0.78);
+  border-radius: 8px;
+  padding: 4px 8px;
+  color: #fff;
+}
+.civ-tag strong, .civ-place strong { display: block; font-size: 12px; }
+.civ-tag span, .civ-place span { display: block; font-size: 10px; color: #e8c66a; }
+.civ-place { background: rgba(14, 18, 24, 0.55); }
+.civ-place strong { font-size: 14px; }
+
+@media (max-width: 760px) {
+  .civ-left { width: calc(100% - 24px); max-height: 34%; top: 70px; }
+  .civ-right { display: none; }
+  .civ-inspector { left: 12px; width: calc(100% - 24px); max-height: 40%; }
+  .civ-top { gap: 8px; padding: 6px 8px; width: calc(100% - 24px); justify-content: space-between; }
+  .civ-speeds button { padding: 4px 6px; }
+}

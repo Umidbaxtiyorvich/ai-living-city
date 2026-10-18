@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from ..ai.mind import Mind
 from ..clock import DAYS_PER_YEAR
 from ..emotions.model import Emotions
 from ..jobs.professions import Education, Profession
@@ -68,6 +69,8 @@ class Activity(StrEnum):
     SOCIALISING = "socialising"
     AT_HOSPITAL = "at_hospital"
     SEEKING_JOB = "seeking_job"
+    #: Self-directed study chosen by the agent's mind, not by the clock.
+    STUDYING = "studying"
     GOING_HOME = "going_home"
 
 
@@ -165,6 +168,8 @@ class Agent:
     needs: Needs = field(default_factory=Needs)
     emotions: Emotions = field(default_factory=Emotions)
     memory: Memory = field(default_factory=Memory)
+    #: Goals, learned preferences, reflection — see `sim.ai.mind`.
+    mind: Mind = field(default_factory=Mind)
 
     #: Continuous position, so movement is smooth between tile centres.
     position: tuple[float, float] = (0.0, 0.0)
@@ -278,6 +283,8 @@ class Agent:
             "player_order": self.player_order,
             "player_order_note": self.player_order_note,
             "desk": self.desk or None,
+            "thought": self.mind.thought,
+            "awareness": round(self.mind.awareness, 1),
         }
 
     def detail_state(self) -> dict:
@@ -299,4 +306,5 @@ class Agent:
             "children_ids": list(self.children_ids),
             "relationships": {str(k): round(v, 1) for k, v in self.relationships.items()},
             "recent_memories": [entry.as_dict() for entry in self.memory.recent_all(5)],
+            "mind": self.mind.as_dict(),
         }

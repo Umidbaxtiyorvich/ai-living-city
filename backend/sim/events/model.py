@@ -38,6 +38,9 @@ class EventType(StrEnum):
     PRESIDENT_DECISION = "president_decision"
     POLICY_CHANGE = "policy_change"
     DECISION_REVIEWED = "decision_reviewed"
+    CITY_RENEWAL = "city_renewal"
+    CITIZEN_MILESTONE = "citizen_milestone"
+    PRESIDENT_LESSON = "president_lesson"
     # Trouble
     ROAD_ACCIDENT = "road_accident"
     FIRE = "fire"

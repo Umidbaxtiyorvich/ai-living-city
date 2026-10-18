@@ -41,6 +41,10 @@ class Building:
     staff: dict[Profession, list[int]] = field(default_factory=dict)
     #: Tick the building opened, for the event log.
     opened_tick: int | None = None
+    #: 0..100 physical state. Falls daily; the renewal office repairs or
+    #: redevelops worn buildings (see `sim.urban.renewal`).
+    condition: float = 100.0
+    renovations: int = 0
 
     @property
     def spec(self) -> BuildingSpec:

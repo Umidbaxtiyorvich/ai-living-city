@@ -264,3 +264,14 @@ canvas { display: block; }
 
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-thumb { background: #2a3446; border-radius: 8px; }
+
+/* -- minds ---------------------------------------------------------------- */
+.thought { font-style: italic; color: #cfe3ff; font-size: 12px; margin: 6px 0; }
+.mind { margin: 6px 0; }
+.goals { list-style: none; margin: 6px 0; padding: 0; }
+.goals li { position: relative; font-size: 12px; padding: 3px 0 5px; }
+.goals li i { position: absolute; left: 0; bottom: 0; height: 2px; background: #6fd39a; border-radius: 2px; }
+.thoughts { list-style: none; margin: 6px 0 0; padding: 0; }
+.thoughts li { font-size: 11px; color: #c9d1de; padding: 4px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.thoughts li strong { color: #fff; font-weight: 600; }
+.agent-label em { display: block; font-size: 10px; color: #cfe3ff; font-style: italic; max-width: 180px; white-space: normal; }
