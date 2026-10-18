@@ -46,6 +46,54 @@ Brauzer: [http://localhost:5173/](http://localhost:5173/)
 - **Prezidentni kuzat** — kamera uni kuzatadi
 - Tezlik: 0× pauza, **1×** haqiqiy vaqt (1 sim-daqiqa = 1 real soniya), 5×/10× tezroq
 
+## Sun'iy ong va o'zini yangilaydigan shahar
+
+Har bir fuqaroning **ongi** bor (`backend/sim/ai/mind.py`). U lokal ishlaydi, LLM
+ishlatilmaydi, shuning uchun bepul, tez va deterministik:
+
+- **Tajribadan o'rganadi.** Bo'sh vaqtda nima qilishni (sayr, do'stlar, xarid,
+  o'qish) his-tuyg'u, o'rgangan narsasi va maqsadlariga qarab tanlaydi. Har bir
+  tanlovdan keyin "bu meni baxtliroq qildimi?" deb baholaydi va keyingi safar shunga
+  qarab tanlaydi.
+- **Maqsad qo'yadi.** Ish, o'qish, pul, oila, do'stlar, uy, sog'liq va kasb
+  mahorati kabi maqsadlarni shaxsiyati va ahvoliga qarab tanlaydi. Erishgach yangi
+  maqsad qo'yadi.
+- **O'zini takomillashtiradi.** Ishda ko'nikmasi oshadi. Ish topolmasa, o'qishga
+  kirishadi va yetarli soat o'qisa, yangi ma'lumot darajasini oladi.
+- **Har kuni mulohaza qiladi.** Kunini baholaydi, ong darajasi o'sadi, ichki
+  fikrini aytadi ("💭") va shaharga talab bildiradi (park, uy, shifoxona…).
+
+Fuqarolarning talablari **jamiyat ovozi**ga yig'iladi (`sim/ai/voice.py`).
+Prezident uni o'z ko'rsatkichlari bilan birga hisobga oladi va shunga qarab
+quradi. Prezident ham **o'z qarorlaridan o'rganadi**: ish bergan siyosatga
+ishonchi oshadi, natija bermaganiga ishonchi pasayadi.
+
+**Shahar o'zini yangilaydi** (`sim/urban/renewal.py`): binolar eskiradi. Har
+hafta eng eskirgan bino ta'mirlanadi yoki zichroq binoga almashtiriladi (uy →
+ko'p qavatli uy, klinika → shifoxona, do'kon → bozor).
+
+HUD'da: chap panelda "Jamiyat ongi", fuqaroni bossangiz uning fikri, maqsadlari
+va ong darajasi ko'rinadi.
+
+## 3D odamlar (skeletli, animatsiyali)
+
+```powershell
+cd frontend
+npm run fetch:humans
+```
+
+Bu buyruq `public/models/humans/` papkasiga skeletli odam modellarini yuklaydi
+(three.js namunalari, Mixamo rig) va `manifest.json` yozadi. Kameraga eng yaqin
+28 fuqaro shu modellarda yuradi, yuguradi va turadi. Qolganlari esa yengil
+procedural figura bo'lib qoladi. Model bo'lmasa, ilova procedural figuralar bilan
+ishlayveradi.
+
+Realroq odamlar uchun Quaternius **Universal Base Characters** va **Universal
+Animation Library** paketlarini oling. Ularning GLB fayllarini shu papkaga
+tashlab, `manifest.json`ga qo'shing (`url`, `gender`, ixtiyoriy `clips`, `tint`,
+`skin`, `clipSource`). Kod o'zgartirish shart emas. Paket litsenziyasini
+itch.io'dagi sahifasida tekshiring.
+
 ## Saqlash (shahar restartdan keyin ham davom etadi)
 
 Server ishga tushganda Alembic migratsiyalarini o‘zi bajaradi va oxirgi

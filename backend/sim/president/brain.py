@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..ai.mind import WISH_TEXT, Wish
 from ..buildings.catalog import CATALOG, BuildingCategory, BuildingType
 from ..buildings.construction import MAX_CONCURRENT_PROJECTS
 from ..buildings.models import Building, BuildingStatus
@@ -37,6 +38,8 @@ from .models import (
     ActionKind,
     Concern,
     ConcernCode,
+    Decision,
+    DecisionStatus,
     Priority,
     President,
 )
@@ -111,6 +114,12 @@ class BrainContext:
     traffic_congestion: float = 0.0
     parking_shortage: int = 0
     transit_route_count: int = 0
+    #: Aggregated citizen wishes, wish name → strength 0..1.
+    voice: dict | None = None
+    #: How strongly the president currently listens to that voice.
+    responsiveness: float = 0.5
+    #: Learned per-concern trust, concern code → multiplier.
+    weights: dict | None = None
 
     def first_unlocked(self, *candidates: BuildingType) -> BuildingType | None:
         """The first candidate the city is allowed to build, in preference order."""
@@ -147,6 +156,7 @@ class PresidentBrain:
             self._traffic,
             self._parking,
             self._transit,
+            self._citizen_voice,
         ):
             concern = detector(context, stats)
             if concern is not None and concern.severity > 0.05:
@@ -636,6 +646,43 @@ class PresidentBrain:
             evidence={"routes": routes, "needed": needed},
         )
 
+    def _citizen_voice(self, context: BrainContext, stats: CityStats) -> Concern | None:
+        """
+        The strongest collective wish of the citizens, as a concern.
+
+        This is how the population's minds steer the city: an aggregate of
+        thousands of private wishes competes on equal terms with the
+        president's own indicators.
+        """
+        voice = context.voice or {}
+        if not voice:
+            return None
+        wish = max(voice, key=lambda name: voice[name])
+        strength = float(voice[wish])
+        if strength < 0.2:
+            return None
+
+        options = {
+            "housing": (BuildingType.APARTMENT, BuildingType.TOWNHOUSE, BuildingType.HOUSE),
+            "jobs": (BuildingType.FACTORY, BuildingType.OFFICE, BuildingType.WAREHOUSE),
+            "healthcare": (BuildingType.HOSPITAL, BuildingType.CLINIC, BuildingType.PHARMACY),
+            "education": (BuildingType.UNIVERSITY, BuildingType.SCHOOL),
+            "parks": (BuildingType.PARK,),
+            "shops": (BuildingType.MARKET, BuildingType.SHOP),
+            "culture": (BuildingType.CINEMA, BuildingType.SPORT_CENTER, BuildingType.ZOO),
+        }.get(wish, ())
+        building = context.first_unlocked(*options)
+        if building is None:
+            return None
+
+        return Concern(
+            code=ConcernCode.CITIZEN_VOICE,
+            severity=min(1.0, strength * (0.5 + context.responsiveness * 0.6)),
+            description=f"Fuqarolar so'rayapti: {WISH_TEXT[Wish(wish)]}",
+            action=Action(kind=ActionKind.BUILD, building_type=building),
+            evidence={"wish": wish, "strength": round(strength, 3)},
+        )
+
     # -- 2. decision -------------------------------------------------------
 
     def choose(self, context: BrainContext, concerns: list[Concern]) -> Concern | None:
@@ -650,6 +697,15 @@ class PresidentBrain:
             return None
 
         spendable = self.spendable_budget(context.economy)
+
+        # Experience reorders the agenda: concerns the president has learned
+        # it can fix rise, ones where its actions kept failing sink.
+        weights = context.weights or {}
+        concerns = sorted(
+            concerns,
+            key=lambda item: item.severity * weights.get(str(item.code), 1.0),
+            reverse=True,
+        )
 
         for concern in concerns:
             cost = self.estimated_cost(concern)
@@ -717,8 +773,36 @@ class PresidentBrain:
                 concern=str(decision.concern.code),
                 worked=bool(decision.worked),
             )
+            self._learn(president, decision)
 
         return notes
+
+    @staticmethod
+    def _learn(president: President, decision: Decision) -> None:
+        """
+        Turns one reviewed outcome into lasting policy.
+
+        The weight for the concern moves with the size of the improvement, so a
+        decisive success teaches more than a marginal one, and repeated failure
+        pushes the president to try its other levers first.
+        """
+        if decision.status is not DecisionStatus.APPROVED or decision.worked is None:
+            return
+        code = str(decision.concern.code)
+        weight = president.weight_for(code)
+        improvement = decision.concern.severity - (decision.severity_at_review or 0.0)
+        if decision.worked:
+            weight += 0.08 + 0.4 * max(0.0, improvement)
+        else:
+            weight -= 0.12
+        president.policy_weights[code] = round(max(0.4, min(1.8, weight)), 3)
+        president.lessons_learned += 1
+        # Every lesson sharpens judgement a little; experience has a ceiling.
+        president.intelligence = min(100.0, president.intelligence + 0.15)
+        president.leadership = min(100.0, president.leadership + (0.1 if decision.worked else 0.02))
+        if decision.concern.code is ConcernCode.CITIZEN_VOICE:
+            delta = 0.05 if decision.worked else -0.03
+            president.responsiveness = round(max(0.2, min(1.0, president.responsiveness + delta)), 3)
 
     def effectiveness_for(self, president: President, code: ConcernCode) -> float | None:
         """

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --port=5173 --host",
     "build": "vite build",
-    "preview": "vite preview --port=5173 --host"
+    "preview": "vite preview --port=5173 --host",
+    "fetch:humans": "node scripts/fetch-humans.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.4",

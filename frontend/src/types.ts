@@ -21,6 +21,8 @@ export interface BuildingView {
   capacity: number;
   staff: number;
   job_slots: number;
+  condition?: number;
+  renovations?: number;
 }
 
 export interface AgentView {
@@ -40,6 +42,47 @@ export interface AgentView {
   player_order?: string | null;
   player_order_note?: string;
   desk?: string | null;
+  /** Latest inner monologue line from the citizen's mind. */
+  thought?: string;
+  awareness?: number;
+}
+
+export interface MindGoal {
+  kind: string;
+  text: string;
+  progress: number;
+}
+
+export interface MindDetail {
+  awareness: number;
+  wisdom: number;
+  thought: string;
+  preferences: Record<string, number>;
+  goals: MindGoal[];
+  achieved: MindGoal[];
+  achievements: number;
+  study_hours: number;
+  wishes: Record<string, number>;
+}
+
+export interface SocietyView {
+  voice: { wish: string; text: string; strength: number }[];
+  awareness: number;
+  wisdom: number;
+  achievements: number;
+  studying_share: number;
+  goals_active: number;
+  thoughts: { id: number; name: string; thought: string }[];
+  renewals: number;
+}
+
+export interface PresidentMind {
+  intelligence: number;
+  leadership: number;
+  lessons_learned: number;
+  responsiveness: number;
+  thought: string;
+  policy_weights: Record<string, number>;
 }
 
 export interface PresidentView {
@@ -55,6 +98,7 @@ export interface PresidentView {
   energy: number;
   emergency: string | null;
   avatar_seed: string;
+  thought?: string;
 }
 
 export interface CityEvent {
@@ -135,6 +179,8 @@ export interface Dashboard {
     concern: { code: string; description: string; action: string; priority_name: string };
   } | null;
   emergency: { type: string; text: string } | null;
+  society?: SocietyView;
+  president_mind?: PresidentMind | null;
   player?: {
     owner_name: string;
     role: "president" | "prime_minister";

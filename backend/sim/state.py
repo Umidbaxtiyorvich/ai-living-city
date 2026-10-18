@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from .agents.generator import AgentFactory
 from .agents.models import Agent, Gender
+from .ai.voice import SocietyPulse
 from .buildings.construction import ConstructionManager
 from .buildings.models import Building
 from .city.levels import LEVELS, CityLevel, level_for_population, unlocked_buildings
@@ -84,6 +85,10 @@ class WorldState:
 
     #: Latest analysis, refreshed every tick.
     stats: CityStats = field(default_factory=CityStats)
+    #: Collective mind, recomputed daily from every citizen; never persisted
+    #: because it is derived entirely from the agents.
+    society: SocietyPulse = field(default_factory=SocietyPulse)
+    renewals: int = 0
     city_level: CityLevel = CityLevel.VILLAGE
 
     #: Cooldown bookkeeping for the president's rate-limited levers.
@@ -277,6 +282,8 @@ class WorldState:
                 "capacity": building.housing_capacity,
                 "staff": building.total_staff,
                 "job_slots": building.total_job_slots,
+                "condition": round(building.condition, 1),
+                "renovations": building.renovations,
             }
             for building in self.buildings.values()
             if building.status.value != "demolished"
@@ -311,6 +318,8 @@ class WorldState:
                 else None
             ),
             "emergency": self.emergency.as_dict() if self.emergency else None,
+            "society": {**self.society.as_dict(), "renewals": self.renewals},
+            "president_mind": self.president.mind_state() if self.president else None,
             "player": {
                 **self.player.as_dict(),
                 "desks": self.player.desks_snapshot(self.living_agents),

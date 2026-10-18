@@ -15,3 +15,6 @@ backend/uploads/*
 !backend/uploads/.gitkeep
 backend/workshop/*.py
 !backend/workshop/__init__.py
+# Human models are downloaded (npm run fetch:humans) or added locally, not committed.
+frontend/public/models/humans/*
+!frontend/public/models/humans/.gitkeep

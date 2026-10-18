@@ -85,6 +85,7 @@ export const ACTIVITY_LINE: Record<string, string> = {
   eating: "Ovqatlanmoqdaman",
   at_hospital: "Shifokorga",
   seeking_job: "Ish qidirayapman",
+  studying: "O'qiyapman",
   sleeping: "Uxlayapman",
   idle: "Ko'chada",
   reports: "Hisobot o'qiyapman",

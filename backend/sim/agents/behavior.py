@@ -15,9 +15,11 @@ during working hours, but a merely bored one still shows up to work.
 
 from __future__ import annotations
 
+from ..ai import mind as minds
 from ..buildings.catalog import BuildingCategory
 from ..buildings.models import Building
 from ..clock import MINUTES_PER_HOUR, TimeOfDay
+from ..jobs.professions import Education
 from ..memory.model import MemoryKind
 from ..pathfinding.astar import PathCache
 from ..world.tiles import Grid
@@ -36,6 +38,7 @@ RECOVERY = {
     Activity.AT_HOSPITAL: {"health": 20.0},
     Activity.AT_SCHOOL: {"social": 6.0, "fun": 2.0},
     Activity.WORKING: {"social": 3.0, "fun": -2.0},
+    Activity.STUDYING: {"social": 2.0, "fun": -1.0},
 }
 
 #: Which building category satisfies which intention.
@@ -44,6 +47,7 @@ VENUE_FOR: dict[Activity, tuple[BuildingCategory, ...]] = {
     Activity.LEISURE: (BuildingCategory.ENTERTAINMENT,),
     Activity.SOCIALISING: (BuildingCategory.BUSINESS, BuildingCategory.ENTERTAINMENT),
     Activity.AT_HOSPITAL: (BuildingCategory.HEALTH,),
+    Activity.STUDYING: (BuildingCategory.EDUCATION,),
 }
 
 #: Health below this sends an agent to a clinic.
@@ -100,7 +104,8 @@ def decide_activity(agent: Agent, now: TimeOfDay, laws: frozenset[str] | None = 
     if agent.is_school_age:
         if agent.school_id is not None and 8 <= now.hour < 14:
             return Activity.AT_SCHOOL
-        return Activity.LEISURE
+        if agent.life_stage.value != "teenager":
+            return Activity.LEISURE
 
     if agent.can_work:
         if "mandatory_work" in laws and 8 <= now.hour < 18:
@@ -112,11 +117,15 @@ def decide_activity(agent: Agent, now: TimeOfDay, laws: frozenset[str] | None = 
         if not agent.employed and 8 <= now.hour < 17:
             return Activity.SEEKING_JOB
 
-    # 3. Free time, coloured by mood.
-    bias = agent.emotions.decision_bias()
-    if bias["socialise"] >= bias["leisure"]:
-        return Activity.SOCIALISING
-    return Activity.LEISURE
+    # 3. Free time: the mind weighs mood, what it has learned it enjoys, and
+    # what it is working towards.
+    choice = minds.choose_free_time(
+        agent,
+        bias=agent.emotions.decision_bias(),
+        stamp=now.total_days * 24 + now.hour,
+        can_study=agent.education < Education.POSTGRADUATE and not agent.life_stage.value == "child",
+    )
+    return Activity(choice)
 
 
 def _nearest_building(
@@ -205,15 +214,16 @@ def step_agent(
     paths: PathCache,
     tick: int,
     laws: frozenset[str] | None = None,
-) -> None:
+) -> Education | None:
     """
     Advances one agent by `minutes` of simulated time.
 
     Called only for FULL and REDUCED detail agents; distant ones are moved
-    statistically by the engine instead.
+    statistically by the engine instead. Returns the education level the agent
+    just earned by studying, if any, so the engine can announce it.
     """
     if not agent.alive:
-        return
+        return None
 
     agent.pending_minutes += minutes
     physiology_due = agent.pending_minutes >= PHYSIOLOGY_INTERVAL_MINUTES
@@ -259,14 +269,20 @@ def step_agent(
         arrived = True
 
     if not physiology_due:
-        return
+        return None
 
     elapsed = agent.pending_minutes
     agent.pending_minutes = 0.0
     hours = elapsed / MINUTES_PER_HOUR
+    happiness_before = agent.happiness
+    graduated: Education | None = None
 
     if arrived:
         _apply_recovery(agent, intention, hours)
+        if intention is Activity.WORKING:
+            minds.practice(agent, hours)
+        elif intention is Activity.STUDYING:
+            graduated = minds.study(agent, hours)
 
     agent.needs.drain(hours)
     agent.emotions.decay(hours)
@@ -277,6 +293,18 @@ def step_agent(
         agent.emotions.adjust(stress=1.2 * hours, happiness=-0.8 * hours)
     if agent.unemployed:
         agent.emotions.adjust(stress=0.7 * hours, confidence=-0.4 * hours)
+
+    # Learning closes the loop: how the hour actually felt updates what the
+    # agent believes it enjoys.
+    if arrived:
+        minds.learn(agent, intention.value, agent.happiness - happiness_before, hours)
+    if graduated is not None:
+        agent.emotions.adjust(confidence=12.0, happiness=8.0, excitement=6.0)
+        agent.memory.record(
+            tick, MemoryKind.LONG_TERM, f"O'qishni tamomladim: {graduated.name.lower()} darajasi",
+            importance=0.9, education=int(graduated),
+        )
+    return graduated
 
 
 def _walk_toward(
