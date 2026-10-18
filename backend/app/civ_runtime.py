@@ -43,7 +43,9 @@ def sim_rate(speed: int) -> float:
 TASHKENT = timezone(timedelta(hours=5))
 #: Real seconds between saves. Frequent enough that a deploy or crash loses
 #: at most a minute of history; the file is written atomically.
-SAVE_EVERY_SECONDS = 60.0
+#: Free databases bill by awake time, so hosts set CIV_SAVE_EVERY higher there;
+#: a shutdown or redeploy always saves regardless.
+SAVE_EVERY_SECONDS = float(os.environ.get("CIV_SAVE_EVERY", "60"))
 #: How much missed time a restarted server catches up on.
 MAX_CATCH_UP_SECONDS = 2 * 24 * 3600
 

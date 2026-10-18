@@ -1,22 +1,19 @@
-# Render.com — one-click deploy: https://render.com/deploy
+# Render.com — free web service. The world is kept in a free Postgres
+# (e.g. Neon): set CIV_DATABASE_URL in the dashboard. Free instances sleep
+# after 15 idle minutes; .github/workflows/keepalive.yml pings the site.
 services:
   - type: web
     name: ai-living-city
     runtime: docker
-    plan: starter
+    plan: free
+    region: frankfurt
     healthCheckPath: /api/health
     envVars:
-      - key: MAP_SIZE
-        value: "80"
+      - key: WORLD_MODE
+        value: civ
       - key: DEFAULT_SPEED
         value: "1"
-      - key: FOUNDING_POPULATION
-        value: "25"
-      - key: DATABASE_URL
-        value: sqlite:////data/city.db
-      - key: WORLD_NAME
-        value: AI Living City
-    disk:
-      name: city-data
-      mountPath: /data
-      sizeGB: 1
+      - key: CIV_SAVE_EVERY
+        value: "1800"
+      - key: CIV_DATABASE_URL
+        sync: false
