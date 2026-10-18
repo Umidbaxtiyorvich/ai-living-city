@@ -38,7 +38,8 @@ from .models import (
     DAYS_PER_YEAR,
     MINUTES_PER_TICK,
     TICKS_PER_DAY,
-    WALK_SPEED,
+    WALK_TILES_PER_SECOND,
+    Animal,
     Building,
     Goal,
     Person,
@@ -83,6 +84,7 @@ TASK_LABEL = {
     "play": "O'ynamoqda",
     "learn": "O'rganmoqda",
     "migrate": "Ko'chmoqda",
+    "walk": "Yurmoqda",
     "carried": "Onasining bag'rida",
 }
 
@@ -122,6 +124,13 @@ class Civilization:
         self.recent_thinkers: list[int] = []
         self.last_emigration_day: dict[int, int] = {}
         self.new_people: list[int] = []
+        self.animals: dict[int, Animal] = {}
+        #: Simulated seconds into the current tick, so movement is continuous.
+        self.subsecond = 0.0
+        #: Tests and headless runs move everyone once per tick; the live
+        #: runtime instead calls `move()` many times a second.
+        self.auto_move = True
+        self.player_id: int | None = None
 
     # -- time --------------------------------------------------------------
 
@@ -135,7 +144,11 @@ class Civilization:
 
     @property
     def hour(self) -> float:
-        return (self.tick % TICKS_PER_DAY) * MINUTES_PER_TICK / 60.0
+        return ((self.tick % TICKS_PER_DAY) * MINUTES_PER_TICK * 60.0 + self.subsecond) / 3600.0
+
+    @property
+    def clock_seconds(self) -> float:
+        return self.tick * MINUTES_PER_TICK * 60.0 + self.subsecond
 
     @property
     def night(self) -> bool:
@@ -152,7 +165,7 @@ class Civilization:
 
     # -- genesis -----------------------------------------------------------
 
-    def genesis(self) -> None:
+    def genesis(self, start_minutes: int | None = None) -> None:
         """Ten people, a fire, and the land."""
         site = self._best_site(None, min_distance=0, max_distance=self.world.width)
         settlement = self._found_settlement(site, founders=[])
@@ -174,9 +187,14 @@ class Civilization:
             )
             person.settlement_id = settlement.id
             settlement.founders.append(person.id)
-        # The story opens at sunrise, not in the dark.
-        self.tick = 7 * 60 // MINUTES_PER_TICK
+        # The story opens at the given time of day (the real clock when live),
+        # or at sunrise.
+        minutes = 7 * 60 if start_minutes is None else start_minutes
+        self.tick = minutes // MINUTES_PER_TICK
+        self.subsecond = (minutes % MINUTES_PER_TICK) * 60.0
         self.log("Birinchi o'n kishi gulxan atrofida to'plandi. Tarix boshlandi.", "era")
+        self.ensure_player()
+        self.spawn_animals()
         self._update_settlements()
 
     def _site_score(self, x: int, y: int) -> float:
@@ -286,7 +304,10 @@ class Civilization:
     # -- the tick ----------------------------------------------------------
 
     def step(self) -> None:
+        if self.auto_move:
+            self.move(MINUTES_PER_TICK * 60.0)
         self.tick += 1
+        self.subsecond = 0.0
         for person in list(self.people.values()):
             if person.alive:
                 self._live(person)
@@ -319,13 +340,56 @@ class Civilization:
             self._carry_baby(p)
             return
 
+        if self._controlled(p):
+            if not p.path:
+                self._work(p)
+            return
+
         if (p.task == "idle" and p.task_ticks >= 3) or self._should_reconsider(p):
             self._decide(p)
 
         if p.path:
-            self._walk(p)
             return
         self._work(p)
+
+    def _controlled(self, p: Person) -> bool:
+        """The player's character obeys the player unless they hand it to autopilot."""
+        if not p.player or p.auto:
+            return False
+        # Even the player's character will not starve while they look away.
+        if p.hunger < 12 and p.task not in ("eat", "forage"):
+            self._decide(p)
+        return True
+
+    # -- continuous movement ------------------------------------------------
+
+    def move(self, seconds: float) -> None:
+        """Walks everyone `seconds` of simulated time. Called many times a second when live."""
+        if seconds <= 0:
+            return
+        if not self.auto_move:
+            self.subsecond = min(self.subsecond + seconds, MINUTES_PER_TICK * 60.0 - 0.001)
+        now = self.clock_seconds
+        for p in self.people.values():
+            if not p.alive:
+                continue
+            if p.stage == "baby":
+                self._carry_baby(p)
+                continue
+            if p.path:
+                factor = 0.6 if p.stage in ("child", "elder") else 1.0
+                if p.carry > 0:
+                    factor *= 0.85
+                self._walk(p, WALK_TILES_PER_SECOND * seconds * factor)
+                if not p.path and p.task in ("eat", "haul"):
+                    self._work(p)
+                elif not p.path and p.task == "walk":
+                    p.task = "idle"
+            elif not self.auto_move and p.task == "idle" and now >= p.rest_until and not (p.player and not p.auto):
+                # Live, nobody stands about for ten minutes waiting for a tick.
+                p.rest_until = now + 45.0
+                self._decide(p)
+        self._move_animals(seconds)
 
     def _should_reconsider(self, p: Person) -> bool:
         if p.task == "sleep":
@@ -483,10 +547,7 @@ class Civilization:
         if not p.path:
             p.path = [(tx, ty)] if math.hypot(tx - p.x, ty - p.y) < 3 else []
 
-    def _walk(self, p: Person) -> None:
-        budget = WALK_SPEED * (0.6 if p.stage == "child" or p.stage == "elder" else 1.0)
-        if p.carry > 0:
-            budget *= 0.85
+    def _walk(self, p: Person, budget: float) -> None:
         while budget > 0 and p.path:
             tx, ty = p.path[0]
             dx, dy = tx - p.x, ty - p.y
@@ -853,6 +914,199 @@ class Civilization:
             return None
         return max(candidates, key=lambda q: p.relationships.get(q.id, 0.0) + self.rng.uniform(0, 8))
 
+
+    # -- the player ----------------------------------------------------------
+
+    def ensure_player(self, name: str = "Umid", surname: str = "Ravshanov") -> Person:
+        existing = next((p for p in self.people.values() if p.player and p.alive), None)
+        if existing is not None:
+            self.player_id = existing.id
+            return existing
+        home = next((s for s in self.settlements.values() if not s.abandoned), None)
+        x, y = (home.x, home.y) if home else (self.world.width / 2, self.world.height / 2)
+        person = self._make_person(gender="male", surname=surname, age_years=30, x=x + 1.5, y=y + 1.5)
+        person.name = name
+        person.player = True
+        person.auto = False
+        person.skin, person.hair, person.clothes = "#d9a273", "#1d140e", "#2f5d8a"
+        person.settlement_id = home.id if home else None
+        person.personality.update({"openness": 0.85, "ambition": 0.9, "extraversion": 0.7})
+        self.player_id = person.id
+        self.log(f"{name} {surname} bu dunyoga qadam qo'ydi.", "era")
+        return person
+
+    @property
+    def player(self) -> Person | None:
+        p = self.people.get(self.player_id) if self.player_id else None
+        return p if p is not None and p.alive else None
+
+    def player_goto(self, x: float, y: float) -> str:
+        p = self.player
+        if p is None:
+            return "Qahramon topilmadi"
+        self._go(p, "walk", (x, y))
+        return "Yo'lga chiqdingiz" if p.path or p.target else "U yerga yo'l yo'q"
+
+    def player_do(self, action: str) -> str:
+        p = self.player
+        if p is None:
+            return "Qahramon topilmadi"
+        s = self.settlements.get(p.settlement_id) if p.settlement_id else None
+        p.task_ticks = 0
+        if action == "auto":
+            p.auto = not p.auto
+            return "Avtopilot yoqildi — qahramoningiz o'zi yashaydi" if p.auto else "Boshqaruv sizda"
+        if action in ("forage", "chop", "quarry"):
+            self._start_gathering(p, action)
+        elif action == "build" and s is not None:
+            self._start_building(p, s)
+        elif action == "eat":
+            if s is not None and s.storage.food >= 1:
+                self._go(p, "eat", self._drop_point(s))
+            else:
+                self._start_gathering(p, "forage", eat=True)
+        elif action == "sleep":
+            self._go(p, "sleep", self._bed_for(p, s))
+        elif action == "think" and s is not None:
+            self._go(p, "think", self._gathering_point(s))
+        elif action == "farm" and s is not None:
+            self._start_farming(p, s)
+        elif action == "rest":
+            self._go(p, "idle", (int(p.x), int(p.y)))
+        return self.task_label(p.task) if p.task != "idle" or action == "rest" else "Hozir buni qilib bo'lmaydi"
+
+    def task_label(self, task: str) -> str:
+        return TASK_LABEL.get(task, task)
+
+    def player_build(self, kind: str, x: int, y: int, creative: bool = False) -> dict:
+        p = self.player
+        if p is None:
+            return {"ok": False, "reply": "Qahramon topilmadi"}
+        bp = BLUEPRINT_BY_KIND.get(kind)
+        if bp is None:
+            return {"ok": False, "reply": "Bunday bino yo'q"}
+        s = self.settlements.get(p.settlement_id) if p.settlement_id else None
+        if s is None:
+            return {"ok": False, "reply": "Avval biror manzilga qo'shiling"}
+        ox, oy = int(round(x - (bp.width - 1) / 2)), int(round(y - (bp.height - 1) / 2))
+        if not self._plot_ok(ox, oy, bp.width, bp.height, field=kind == "field"):
+            return {"ok": False, "reply": "Bu joyga qurib bo'lmaydi — suv, tosh yoki boshqa bino bor"}
+        building = Building(
+            id=self.next_building, kind=kind, x=ox, y=oy, settlement_id=s.id, owner_id=p.id,
+            need_wood=bp.wood, need_stone=bp.stone,
+            wall=WALL_COLOURS[p.id % len(WALL_COLOURS)], roof=ROOF_COLOURS[p.id % len(ROOF_COLOURS)],
+            style=self.rng.randrange(8),
+        )
+        self.next_building += 1
+        self.buildings[building.id] = building
+        for dy in range(bp.height):
+            for dx in range(bp.width):
+                i = self.world.index(ox + dx, oy + dy)
+                self.occupied[i] = building.id
+                if self.world.terrain[i] == Terrain.FOREST:
+                    self.world.take_wood(i, 99)
+                    self.world.set(ox + dx, oy + dy, Terrain.GRASS)
+        self.buildings_version += 1
+        if creative:
+            building.need_wood = building.need_stone = 0.0
+            building.work_done = bp.work
+            self._complete(building, p)
+            return {"ok": True, "reply": f"{bp.name} tayyor!", "id": building.id}
+        self.log(f"{p.name} {p.surname} {bp.name.lower()} qurishni boshladi", "build")
+        return {
+            "ok": True,
+            "id": building.id,
+            "reply": f"{bp.name} qurilishi boshlandi: {int(bp.wood)} yog'och, {int(bp.stone)} tosh kerak. "
+                     "Qo'shnilar yordam beradi, o'zingiz ham \"Qurish\" tugmasini bosing.",
+        }
+
+    def player_talk(self, other_id: int) -> str:
+        p = self.player
+        q = self.people.get(other_id)
+        if p is None or q is None or not q.alive or q is p:
+            return "Suhbatdosh topilmadi"
+        if math.hypot(q.x - p.x, q.y - p.y) > 3.0:
+            self._go(p, "walk", (int(q.x), int(q.y)))
+            return f"{q.name} tomon yurdingiz — yetib borgach yana bosing"
+        warmth = 6 + q.trait("agreeableness") * 8
+        value = p.bond(q.id, warmth)
+        q.bond(p.id, warmth * 0.9)
+        p.social = min(100.0, p.social + 15)
+        q.social = min(100.0, q.social + 10)
+        q.remember(f"{p.name} bilan suhbatlashdim")
+        line = q.thought or "Salom!"
+        return f"{q.name}: «{line}» (munosabat {int(value)})"
+
+    def player_propose(self, other_id: int) -> str:
+        p = self.player
+        q = self.people.get(other_id)
+        if p is None or q is None or not q.alive:
+            return "Topilmadi"
+        if p.partner_id is not None:
+            return "Siz allaqachon oilalisiz"
+        if q.gender == p.gender or not q.adult or q.partner_id is not None:
+            return f"{q.name} bilan turmush qurib bo'lmaydi"
+        if q.relationships.get(p.id, 0.0) < 20:
+            return f"{q.name}: «Sizni hali yaxshi tanimayman...» — ko'proq suhbatlashing"
+        self._marry(p, q)
+        return f"Tabriklaymiz! {q.name} rozi bo'ldi — siz oila qurdingiz 💍"
+
+    # -- animals ---------------------------------------------------------------
+
+    def spawn_animals(self) -> None:
+        w = self.world
+        next_id = max(self.animals, default=0) + 1
+        for herd in range(3):
+            spot = w.nearest(
+                self.rng.randrange(8, w.width - 8), self.rng.randrange(8, w.height - 8),
+                lambda i: w.terrain[i] in (Terrain.GRASS, Terrain.FERTILE), radius=20,
+            )
+            if spot is None:
+                continue
+            for _ in range(self.rng.randint(3, 5)):
+                x = spot[0] + self.rng.uniform(-2, 2)
+                y = spot[1] + self.rng.uniform(-2, 2)
+                self.animals[next_id] = Animal(next_id, "horse", x, y, x, y, wait=self.rng.uniform(0, 200), herd=herd)
+                next_id += 1
+        for _ in range(6):
+            spot = w.nearest(
+                self.rng.randrange(6, w.width - 6), self.rng.randrange(6, w.height - 6),
+                lambda i: w.terrain[i] == Terrain.GRASS and w.wood[i] == 0, radius=20,
+            )
+            if spot is None:
+                continue
+            self.animals[next_id] = Animal(next_id, "fox", spot[0], spot[1], spot[0], spot[1], wait=self.rng.uniform(0, 300))
+            next_id += 1
+
+    def _move_animals(self, seconds: float) -> None:
+        w = self.world
+        leaders: dict[int, Animal] = {}
+        for a in self.animals.values():
+            if a.kind == "horse":
+                leaders.setdefault(a.herd, a)
+        for a in self.animals.values():
+            if a.wait > 0:
+                a.wait -= seconds
+                continue
+            speed = 0.45 if a.kind == "horse" else 0.6
+            dx, dy = a.tx - a.x, a.ty - a.y
+            dist = math.hypot(dx, dy)
+            step = speed * seconds
+            if dist > step:
+                a.x += dx / dist * step
+                a.y += dy / dist * step
+                continue
+            a.x, a.y = a.tx, a.ty
+            a.wait = self.rng.uniform(40, 240)
+            anchor = leaders.get(a.herd) if a.kind == "horse" and leaders.get(a.herd) is not a else a
+            for _ in range(8):
+                tx = anchor.x + self.rng.uniform(-6, 6)
+                ty = anchor.y + self.rng.uniform(-6, 6)
+                ix, iy = int(round(tx)), int(round(ty))
+                if w.walkable(ix, iy) and w.terrain[w.index(ix, iy)] != Terrain.BUILT:
+                    a.tx, a.ty = tx, ty
+                    break
+
     # -- research ----------------------------------------------------------
 
     def _research(self) -> None:
@@ -1174,6 +1428,9 @@ class Civilization:
         self._update_settlements()
 
     def _mortality(self, p: Person) -> None:
+        if p.player:
+            p.health = max(p.health, 25.0)
+            return
         years = p.age_years
         risk = 0.0004
         if years > 50:
@@ -1226,14 +1483,18 @@ class Civilization:
                     best = (value, q)
             if best is None:
                 continue
-            q = best[1]
-            p.partner_id, q.partner_id = q.id, p.id
-            q.settlement_id = p.settlement_id
-            for person, other in ((p, q), (q, p)):
-                person.remember(f"{other.name} bilan turmush qurdim")
-                person.social = min(100.0, person.social + 25)
-                person.goals = [g for g in person.goals if g.kind != "family"]
-            self.log(f"To'y! {p.name} {p.surname} va {q.name} {q.surname} turmush qurdi", "wedding")
+            if p.player or best[1].player:
+                continue  # the player chooses for themselves
+            self._marry(p, best[1])
+
+    def _marry(self, p: Person, q: Person) -> None:
+        p.partner_id, q.partner_id = q.id, p.id
+        q.settlement_id = p.settlement_id
+        for person, other in ((p, q), (q, p)):
+            person.remember(f"{other.name} bilan turmush qurdim")
+            person.social = min(100.0, person.social + 25)
+            person.goals = [g for g in person.goals if g.kind != "family"]
+        self.log(f"To'y! {p.name} {p.surname} va {q.name} {q.surname} turmush qurdi", "wedding")
 
     def _births(self) -> None:
         for mother in self.living:
@@ -1484,7 +1745,7 @@ class Civilization:
             "day": self.day,
             "year": self.year,
             "day_of_year": self.day % DAYS_PER_YEAR + 1,
-            "hour": round(self.hour, 2),
+            "hour": round(self.hour, 4),
             "night": self.night,
         }
 
@@ -1521,6 +1782,9 @@ class Civilization:
             "births": self.births,
             "deaths": self.deaths,
             "last_emigration_day": {str(k): v for k, v in self.last_emigration_day.items()},
+            "animals": [encode(a) for a in self.animals.values()],
+            "subsecond": self.subsecond,
+            "player_id": self.player_id,
             "rng": list(self.rng.getstate()[1]),
         }
 
@@ -1566,6 +1830,16 @@ class Civilization:
         civ.recent_thinkers = []
         civ.last_emigration_day = {int(k): v for k, v in data.get("last_emigration_day", {}).items()}
         civ.new_people = []
+        civ.animals = {}
+        for item in data.get("animals", []):
+            animal = decode_dataclass(Animal, item)
+            civ.animals[animal.id] = animal
+        civ.subsecond = data.get("subsecond", 0.0)
+        civ.auto_move = True
+        civ.player_id = data.get("player_id")
+        civ.saved_at = data.get("saved_at")
+        if not civ.animals:
+            civ.spawn_animals()
         return civ
 
 

@@ -5,6 +5,12 @@ import { Color, type DirectionalLight, type HemisphereLight, Vector3 } from "thr
 import { Ground, Nature } from "./Land";
 import { People, bodies } from "./People";
 import { Structures } from "./Structures";
+import { RealPeople } from "./RealPeople";
+import { Wildlife } from "./Wildlife";
+import { Ghost } from "./Ghost";
+
+/** Camera heading on the ground, so WASD moves relative to what you see. */
+export const view = { azimuth: 0 };
 import { useCiv } from "./store";
 
 type Controls = { target: Vector3; object: { position: Vector3 }; update: () => void };
@@ -105,6 +111,7 @@ function Camera() {
       }
     }
     lastTarget = rig.target;
+    view.azimuth = Math.atan2(rig.object.position.x - rig.target.x, rig.object.position.z - rig.target.z);
   });
 
   return (
@@ -188,6 +195,9 @@ export function CivScene() {
       <Nature />
       <Structures />
       <People />
+      <RealPeople />
+      <Wildlife />
+      <Ghost />
       <PersonTag />
       <SettlementNames />
       <Camera />

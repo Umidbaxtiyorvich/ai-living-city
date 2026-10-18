@@ -1,7 +1,20 @@
 import { create } from "zustand";
 
-/** [id, x, y, task, stage, gender initial, carrying] — streamed ten times a second. */
-export type PersonRow = [number, number, number, string, string, string, string];
+/** [id, x, y, task, stage, gender initial, carrying, is player] — streamed ten times a second. */
+export type PersonRow = [number, number, number, string, string, string, string, number];
+/** [id, kind, x, y, moving] */
+export type AnimalRow = [number, string, number, number, number];
+
+export interface Blueprint {
+  kind: string;
+  name: string;
+  wood: number;
+  stone: number;
+  w: number;
+  h: number;
+  category: string;
+  known: boolean;
+}
 
 export interface Looks {
   id: number;
@@ -97,6 +110,10 @@ export interface CivFrame {
   looks?: Looks[];
   chronicle?: ChronicleItem[];
   labels?: Record<string, string>;
+  animals?: AnimalRow[];
+  player_id?: number | null;
+  player_auto?: boolean;
+  blueprints?: Blueprint[];
 }
 
 interface CivStore {
@@ -112,6 +129,14 @@ interface CivStore {
   settlements: CivSettlement[];
   chronicle: ChronicleItem[];
   labels: Record<string, string>;
+  animals: AnimalRow[];
+  playerId: number | null;
+  playerAuto: boolean;
+  blueprints: Blueprint[];
+  /** Blueprint being placed with the next click on the ground. */
+  placing: string | null;
+  creative: boolean;
+  message: string;
   stats: CivStats | null;
   time: CivTime | null;
   speed: number;
@@ -124,6 +149,9 @@ interface CivStore {
   select: (id: number | null) => void;
   setFollow: (id: number | null) => void;
   flyTo: (x: number, z: number) => void;
+  setPlacing: (kind: string | null) => void;
+  setCreative: (value: boolean) => void;
+  say: (message: string) => void;
 }
 
 export const useCiv = create<CivStore>((set, get) => ({
@@ -139,6 +167,13 @@ export const useCiv = create<CivStore>((set, get) => ({
   settlements: [],
   chronicle: [],
   labels: {},
+  animals: [],
+  playerId: null,
+  playerAuto: false,
+  blueprints: [],
+  placing: null,
+  creative: false,
+  message: "",
   stats: null,
   time: null,
   speed: 1,
@@ -173,6 +208,16 @@ export const useCiv = create<CivStore>((set, get) => ({
     if (frame.buildings) patch.buildings = frame.buildings;
     if (frame.chronicle) patch.chronicle = frame.chronicle;
     if (frame.labels) patch.labels = frame.labels;
+    if (frame.animals) patch.animals = frame.animals;
+    if (frame.player_id !== undefined) {
+      patch.playerId = frame.player_id ?? null;
+      // Start the camera on the player's own character.
+      if (state.playerId == null && frame.player_id != null && state.follow == null) {
+        patch.follow = frame.player_id;
+      }
+    }
+    if (frame.blueprints) patch.blueprints = frame.blueprints;
+    if (frame.player_auto !== undefined) patch.playerAuto = frame.player_auto;
     if (frame.looks && frame.looks.length) {
       const looks = new Map(patch.looks ?? state.looks);
       for (const item of frame.looks) looks.set(item.id, item);
@@ -184,7 +229,23 @@ export const useCiv = create<CivStore>((set, get) => ({
   select: (selected) => set({ selected }),
   setFollow: (follow) => set({ follow }),
   flyTo: (x, z) => set((s) => ({ focus: { x, z, n: (s.focus?.n ?? 0) + 1 }, follow: null })),
+  setPlacing: (placing) => set({ placing }),
+  setCreative: (creative) => set({ creative }),
+  say: (message) => set({ message }),
 }));
+
+/** Sends one command for the player's character and shows the reply. */
+export async function act(body: Record<string, unknown>): Promise<{ reply?: string; ok?: boolean }> {
+  try {
+    const result = await civPost<{ reply?: string; ok?: boolean; detail?: string }>("/api/civ/player", body);
+    const text = result.reply ?? result.detail ?? "";
+    if (text) useCiv.getState().say(text);
+    return result;
+  } catch {
+    useCiv.getState().say("Server bilan aloqa yo'q");
+    return { ok: false };
+  }
+}
 
 let socket: WebSocket | null = null;
 let retry = 0;

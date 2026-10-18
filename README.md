@@ -23,6 +23,18 @@ Eski "boshqariladigan shahar" rejimi ham saqlangan: `WORLD_MODE=city`.
 - Ekranda: yer bitta mesh bo'lib chiziladi, daraxtlar va odamlar "instancing" bilan
   chiziladi, shuning uchun sahna 30 ga yaqin draw call bilan tez ishlaydi.
 - Tezlik: 1× da bir kun ≈ 48 soniya. 50× gacha tezlashtirish mumkin.
+- **Vaqt haqiqiy**: 1× da o'yindagi soat Toshkent vaqti bilan bir xil yuradi, odamlar
+  haqiqiy tezlikda (≈1.3 m/s) yuradi. O'yindagi 1 yil 12 kunga teng. Tezlashtirish
+  tugmalari: 10×, 1 daq/s, 6 daq/s, 1 kun/min. Server uxlab qolsa, qayta yonganda
+  o'tgan vaqtni (2 kungacha) tiklaydi.
+- **Siz ham dunyodasiz**: Umid Ravshanov qahramoni. WASD yoki yerni bosib yurasiz.
+  Meva terish, o'tin kesish, tosh qazish, qurish, ovqatlanish, uxlash. "Yaratish"
+  menyusidan istalgan binoni tanlab, yerga qo'yasiz ("Darhol qurish" — resurssiz).
+  Odamlar bilan gaplashib, yaqinlashgach turmush taklif qilasiz: oilangizda
+  farzandlar tug'iladi. "Avto" qahramoningizni o'zi yashashga qo'yadi.
+- **Hayvonlar va qushlar**: otlar podasi, tulkilar, laylak, flamingo va to'tiqushlar.
+- **Haqiqiy odamlar**: kameraga yaqin 14 kishi realistik 3D tanada (yurish/turish
+  animatsiyasi), uzoqdagilar yengil figura bo'ladi.
 - Dunyo har yili `backend/civ_world.json` (Docker'da `/data/civ_world.json`) fayliga
   saqlanadi. "Yangi dunyo" tugmasi 10 kishi bilan qaytadan boshlaydi.
 
@@ -162,3 +174,12 @@ ob-havo, o‘yinchi buyruqlari (o‘zbek tilida), vazirlar stollari, save/load.
 
 Keyingi bosqichlar: transport va traffik, zoo hayvonlari, 1000+ agent uchun
 optimizatsiya, saylov tizimi.
+
+
+## 3D modellar va litsenziyalar
+
+- Odamlar: Innerscene "Sam" va "Maya" (MakeHuman/MPFB asosida), **CC0**.
+  `frontend/public/models/humans/sam.glb`, `maya.glb` — siqilgan (≈1.7 MB).
+- Ot, laylak, flamingo, to'tiqush: three.js namunalari (`examples/models/gltf`).
+- Tulki: Khronos glTF Sample Assets, **CC-BY 4.0** — PixelMannen (model),
+  tomkranis (rig va animatsiya).

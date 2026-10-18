@@ -7,7 +7,11 @@ import {
   Object3D,
   SRGBColorSpace,
 } from "three";
-import { useCiv } from "./store";
+import type { ThreeEvent } from "@react-three/fiber";
+import { act, useCiv } from "./store";
+
+/** Tile under the pointer, read by the building ghost. */
+export const hover = { x: 0, y: 0, active: false };
 
 /** Base colour per terrain code (see backend civ/world.py TERRAIN_CODE). */
 const GROUND: Record<string, [number, number, number]> = {
@@ -87,7 +91,37 @@ export function Ground() {
   if (!width) return null;
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[width / 2 - 0.5, 0, height / 2 - 0.5]} receiveShadow>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[width / 2 - 0.5, 0, height / 2 - 0.5]}
+        receiveShadow
+        onPointerMove={(event: ThreeEvent<PointerEvent>) => {
+          hover.x = Math.round(event.point.x);
+          hover.y = Math.round(event.point.z);
+          hover.active = true;
+        }}
+        onPointerOut={() => {
+          hover.active = false;
+        }}
+        onClick={(event: ThreeEvent<MouseEvent>) => {
+          // A drag to orbit the camera is not a click on the land.
+          if (event.delta > 6) return;
+          const x = Math.round(event.point.x);
+          const y = Math.round(event.point.z);
+          const state = useCiv.getState();
+          if (state.placing) {
+            event.stopPropagation();
+            const kind = state.placing;
+            void act({ action: "build", kind, x, y, creative: state.creative }).then((result) => {
+              if (result.ok) state.setPlacing(null);
+            });
+            return;
+          }
+          if (state.playerId != null) {
+            void act({ action: "goto", x, y });
+          }
+        }}
+      >
         <planeGeometry args={[width, height]} />
         <meshStandardMaterial map={texture} roughness={0.95} metalness={0} />
       </mesh>

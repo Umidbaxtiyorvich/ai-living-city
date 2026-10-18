@@ -26,6 +26,8 @@ export interface Body {
   seen: number;
 }
 export const bodies = new Map<number, Body>();
+/** People currently drawn as full realistic bodies; the instanced figure hides for them. */
+export const realIds = new Set<number>();
 
 const STAGE: Record<string, number> = { baby: 0.32, child: 0.58, teenager: 0.86, adult: 1, elder: 0.96 };
 const ADULT = 0.5;
@@ -185,6 +187,17 @@ export function People() {
       }
       if (carry && !working) {
         armL = armR = -1.25;
+      }
+
+      if (realIds.has(id)) {
+        for (const mesh of [L, A]) {
+          mesh.setMatrixAt(n * 2, HIDDEN);
+          mesh.setMatrixAt(n * 2 + 1, HIDDEN);
+        }
+        for (const mesh of [T, H, R, C]) mesh.setMatrixAt(n, HIDDEN);
+        ids.push(id);
+        n++;
+        continue;
       }
 
       put(L, n * 2, 0.075, HIP.y, 0, legL, LEG_AFTER);
