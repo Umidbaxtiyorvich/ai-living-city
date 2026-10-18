@@ -25,8 +25,8 @@ import { useCiv, type Looks } from "./store";
  */
 const MALE = "/models/humans/sam.glb";
 const FEMALE = "/models/humans/maya.glb";
-const MAX_REAL = 14;
-const NEAR = 26;
+const MAX_REAL = 24;
+const NEAR = 34;
 const ADULT = 0.5;
 const STAGE: Record<string, number> = { teenager: 0.88, adult: 1, elder: 0.97 };
 

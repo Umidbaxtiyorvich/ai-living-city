@@ -202,6 +202,8 @@ class PlayerBody(BaseModel):
     kind: str | None = None
     creative: bool = False
     id: int | None = None
+    text: str | None = None
+    petition: int | None = None
 
 
 @router.post("/civ/player")

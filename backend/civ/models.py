@@ -88,6 +88,8 @@ class Person:
     auto: bool = True
     #: Simulated second before which an idle person will not reconsider.
     rest_until: float = 0.0
+    #: Day this person last brought a problem to the leader.
+    last_petition_day: int = -999
 
     # -- derived -----------------------------------------------------------
 
@@ -289,6 +291,8 @@ class Settlement:
     population: int = 0
     rank: str = "Qarorgoh"
     abandoned: bool = False
+    #: Leader's instructions: resource → where to look for it.
+    directives: dict[str, str] = field(default_factory=dict)
 
     def payload(self) -> dict:
         return {

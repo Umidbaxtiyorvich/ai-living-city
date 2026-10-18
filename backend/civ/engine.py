@@ -19,7 +19,7 @@ import math
 import random
 from dataclasses import dataclass
 
-from sim.agents.generator import FEMALE_NAMES, MALE_NAMES, SURNAMES
+from sim.agents.generator import FEMALE_NAMES, MALE_NAMES, SURNAMES, surname_for
 
 from .catalog import (
     BLUEPRINT_BY_KIND,
@@ -45,7 +45,10 @@ from .models import (
     Person,
     Settlement,
 )
-from .world import BUILDABLE, WALKABLE, Terrain, World
+from .leader import CUSTOM_WORDS, HELP_BY_KIND, Custom, Petition, describe, understand
+
+CUSTOM_TEXT = {key: text for key, _, text in CUSTOM_WORDS}
+from .world import BUILDABLE, MAX_WOOD, WALKABLE, Terrain, World
 
 FOUNDERS = 10
 CARRY_LIMIT = {"food": 8.0, "wood": 6.0, "stone": 4.0}
@@ -85,6 +88,7 @@ TASK_LABEL = {
     "learn": "O'rganmoqda",
     "migrate": "Ko'chmoqda",
     "walk": "Yurmoqda",
+    "petition": "Rahbarga murojaat qilmoqda",
     "carried": "Onasining bag'rida",
 }
 
@@ -131,6 +135,9 @@ class Civilization:
         #: runtime instead calls `move()` many times a second.
         self.auto_move = True
         self.player_id: int | None = None
+        self.petitions: dict[int, Petition] = {}
+        self.next_petition = 1
+        self.customs: list[Custom] = []
 
     # -- time --------------------------------------------------------------
 
@@ -152,7 +159,11 @@ class Civilization:
 
     @property
     def night(self) -> bool:
-        return self.hour >= 21.5 or self.hour < 5.5
+        dawn = 4.5 if self.has("early_rise") else 5.5
+        return self.hour >= 21.5 or self.hour < dawn
+
+    def has(self, custom: str) -> bool:
+        return any(c.key == custom for c in self.customs)
 
     @property
     def living(self) -> list[Person]:
@@ -262,7 +273,7 @@ class Civilization:
     ) -> Person:
         rng = self.rng
         names = MALE_NAMES if gender == "male" else FEMALE_NAMES
-        used = {p.name for p in self.people.values() if p.alive and p.surname == surname}
+        used = {p.name for p in self.people.values() if p.alive and surname_for(p.surname, "male") == surname_for(surname, "male")}
         name = rng.choice([n for n in names if n not in used] or names)
         personality = {
             trait: round(rng.uniform(0.05, 0.95), 2)
@@ -284,7 +295,7 @@ class Civilization:
         person = Person(
             id=self.next_person,
             name=name,
-            surname=surname,
+            surname=surname_for(surname, gender),
             gender=gender,
             age_days=age_years * DAYS_PER_YEAR,
             x=x,
@@ -324,7 +335,8 @@ class Civilization:
 
     def _live(self, p: Person) -> None:
         sleeping = p.task == "sleep" and not p.path
-        p.hunger = max(0.0, p.hunger - (0.12 if sleeping else 0.2) * (0.6 if not p.adult else 1.0))
+        child_rate = 0.35 if self.has("feed_children") else 0.6
+        p.hunger = max(0.0, p.hunger - (0.12 if sleeping else 0.2) * (child_rate if not p.adult else 1.0))
         if sleeping:
             p.energy = min(100.0, p.energy + 0.75)
         else:
@@ -338,6 +350,10 @@ class Civilization:
         p.task_ticks += 1
         if p.stage == "baby":
             self._carry_baby(p)
+            return
+
+        if p.task == "petition":
+            self._petition_tick(p)
             return
 
         if self._controlled(p):
@@ -385,6 +401,10 @@ class Civilization:
                     self._work(p)
                 elif not p.path and p.task == "walk":
                     p.task = "idle"
+            elif not self.auto_move and p.task == "petition" and now >= p.rest_until:
+                # Keep up with the leader if they walk off.
+                p.rest_until = now + 4.0
+                self._petition_tick(p)
             elif not self.auto_move and p.task == "idle" and now >= p.rest_until and not (p.player and not p.auto):
                 # Live, nobody stands about for ten minutes waiting for a tick.
                 p.rest_until = now + 45.0
@@ -392,6 +412,8 @@ class Civilization:
         self._move_animals(seconds)
 
     def _should_reconsider(self, p: Person) -> bool:
+        if p.task == "petition":
+            return False
         if p.task == "sleep":
             return not self.night and p.energy > 70
         if p.task in ("migrate", "haul", "build", "eat"):
@@ -451,7 +473,7 @@ class Civilization:
 
         if p.stage == "teenager":
             parent = next((self.people[i] for i in p.parent_ids if i in self.people and self.people[i].alive), None)
-            if parent is not None and self.rng.random() < 0.6:
+            if parent is not None and self.rng.random() < (1.0 if self.has("teach_children") else 0.6):
                 p.target_building = parent.id  # reused as "who I learn from"
                 self._go(p, "learn", (int(parent.x), int(parent.y)))
                 return
@@ -493,7 +515,7 @@ class Civilization:
         workable = [b for b in sites if self._workable(b, s)]
         wood_need = sum(b.need_wood for b in sites) + residents * 1.5 - s.storage.wood
         stone_need = sum(b.need_stone for b in sites) + (residents * 0.6 if "masonry" in self.known else 0) - s.storage.stone
-        food_need = residents * 5.0 - s.storage.food
+        food_need = residents * (10.0 if self.has("stockpile") else 5.0) - s.storage.food
         fields = [b for b in self.buildings.values() if b.settlement_id == s.id and b.kind == "field" and b.complete]
 
         scores: dict[str, float] = {
@@ -507,6 +529,8 @@ class Civilization:
         }
         if fields:
             scores["forage"] *= 0.6
+        if self.has("cooperation") and scores["build"] > 0:
+            scores["build"] += 0.6
         if p.adult and p.partner_id is None and p.age_years < 40:
             scores["court"] = 0.3 + p.trait("extraversion") * 0.4 + (0.4 if p.social < 50 else 0)
         if self.hour >= 18:
@@ -552,15 +576,19 @@ class Civilization:
             tx, ty = p.path[0]
             dx, dy = tx - p.x, ty - p.y
             dist = math.hypot(dx, dy)
+            before = (int(round(p.x)), int(round(p.y)))
             if dist <= budget:
                 p.x, p.y = float(tx), float(ty)
                 p.path.pop(0)
                 budget -= dist
-                self.world.walk_over(tx, ty)
             else:
                 p.x += dx / dist * budget
                 p.y += dy / dist * budget
                 budget = 0
+            now_tile = (int(round(p.x)), int(round(p.y)))
+            # Long straight segments still wear a path tile by tile.
+            if now_tile != before and self.world.inside(*now_tile):
+                self.world.walk_over(*now_tile, 3.0 if self.has("roads") else 1.0)
 
     # -- places ------------------------------------------------------------
 
@@ -607,21 +635,30 @@ class Civilization:
         if kind == "forage":
             predicate = lambda i: world.berries[i] >= 1.0  # noqa: E731
         elif kind == "chop":
-            predicate = lambda i: world.terrain[i] == Terrain.FOREST and world.wood[i] >= 1.0  # noqa: E731
+            # Under forest care only mature trees are felled.
+            mature = MAX_WOOD * 0.5 if self.has("forest_care") else 1.0
+            predicate = lambda i: world.terrain[i] == Terrain.FOREST and world.wood[i] >= mature  # noqa: E731
         else:
             predicate = lambda i: world.terrain[i] == Terrain.ROCK and world.stone[i] >= 1.0  # noqa: E731
         busy = {
             world.index(*q.target) for q in self.people.values()
             if q.alive and q is not p and q.task == kind and q.target is not None
         }
-        found = world.nearest(p.x, p.y, predicate, radius=42, skip=busy)
+        settlement = self.settlements.get(p.settlement_id) if p.settlement_id else None
+        resource = {"forage": "food", "chop": "wood", "quarry": "stone"}[kind]
+        origin = self._directed_origin(settlement, resource) or (p.x, p.y)
+        found = None
+        if kind == "forage" and self.has("fishing") and not world.nearest(p.x, p.y, predicate, radius=10, skip=busy):
+            found = None  # bushes are far: fish instead, as the leader taught
+        else:
+            found = world.nearest(origin[0], origin[1], predicate, radius=42, skip=busy)
         if found is None:
             if kind == "forage":
                 # Fishing at the shore when the bushes are bare.
                 shore = world.nearest(
                     p.x, p.y,
                     lambda i: world.terrain[i] in (1, 2, 5, 7) and world.near_water(i % world.width, i // world.width),
-                    radius=30,
+                    radius=40 if self.has("fishing") else 30,
                 )
                 if shore is not None:
                     self._go(p, "forage", shore)
@@ -630,6 +667,11 @@ class Civilization:
                     p.carry_kind = "food" if not eat else p.carry_kind
                     return
             p.task = "idle"
+            self._raise(p, {"chop": "no_wood", "quarry": "no_stone", "forage": "no_food"}[kind], {
+                "chop": "Yaqin atrofda o'tin qolmadi. Qayerdan o'tin olaylik?",
+                "quarry": "Tosh topolmayapmiz. Qayerdan qazib olsak bo'ladi?",
+                "forage": "Atrofda meva ham, baliq ham qolmadi. Nima yeymiz?",
+            }[kind])
             return
         # Standing on rock or in a forest blocks routing; aim for an adjacent free tile.
         tx, ty = found
@@ -740,7 +782,7 @@ class Civilization:
             teacher = self.people.get(p.target_building or -1)
             if teacher is not None and teacher.alive:
                 best = max(teacher.skills, key=lambda k: teacher.skills[k]) if teacher.skills else "gathering"
-                p.improve(best, HOURS_PER_TICK * 0.8)
+                p.improve(best, HOURS_PER_TICK * (1.6 if self.has("teach_children") else 0.8))
                 if math.hypot(teacher.x - p.x, teacher.y - p.y) > 3 and p.task_ticks % 10 == 0:
                     self._go(p, "learn", (int(teacher.x), int(teacher.y)))
             p.awareness = min(100.0, p.awareness + 0.004)
@@ -770,7 +812,7 @@ class Civilization:
         rate = (0.5 + p.skill(skill_name) / 60.0) * tool * HOURS_PER_TICK * 6
         if kind == "food":
             if p.target_building == -1 or world.berries[i] <= 0:
-                got = rate * 0.5 if world.near_water(int(p.x), int(p.y), 2) else 0.0  # fishing
+                got = rate * (0.75 if self.has("fishing") else 0.5) if world.near_water(int(p.x), int(p.y), 2) else 0.0  # fishing
             else:
                 got = world.take_berries(i, rate * 0.6)
         elif kind == "wood":
@@ -1050,6 +1092,277 @@ class Civilization:
             return f"{q.name}: «Sizni hali yaxshi tanimayman...» — ko'proq suhbatlashing"
         self._marry(p, q)
         return f"Tabriklaymiz! {q.name} rozi bo'ldi — siz oila qurdingiz 💍"
+
+
+    # -- the leader --------------------------------------------------------------
+
+    def _raise(self, p: Person, kind: str, text: str) -> Petition | None:
+        """Someone who is stuck goes to the leader — within reason."""
+        me = self.player
+        if me is None or p.player or not p.adult or p.stage == "elder" and kind != "sick":
+            return None
+        if self.day - p.last_petition_day < 3:
+            return None
+        open_now = [x for x in self.petitions.values() if x.status == "open"]
+        if len(open_now) >= 6 or any(x.person_id == p.id for x in open_now):
+            return None
+        if any(x.kind == kind and x.settlement_id == p.settlement_id for x in open_now):
+            return None
+        pet = Petition(
+            id=self.next_petition, person_id=p.id, settlement_id=p.settlement_id,
+            kind=kind, text=text, day=self.day,
+        )
+        self.next_petition += 1
+        self.petitions[pet.id] = pet
+        p.last_petition_day = self.day
+        p.carry, p.carry_kind = 0.0, ""
+        p.target_building = pet.id
+        p.task_ticks = 0
+        self._go(p, "petition", (me.x + self.rng.uniform(-1.5, 1.5), me.y + self.rng.uniform(-1.5, 1.5)))
+        p.task = "petition"
+        p.thought = f"Rahbarimizdan maslahat so'rayman: {text}"
+        return pet
+
+    def _petition_tick(self, p: Person) -> None:
+        pet = self.petitions.get(p.target_building or -1)
+        me = self.player
+        if pet is None or pet.status != "open" or me is None:
+            p.task = "idle"
+            return
+        if p.hunger < 12:
+            # Hunger wins; the question can wait.
+            pet.arrived = False
+            p.task = "idle"
+            self._decide(p)
+            return
+        if math.hypot(me.x - p.x, me.y - p.y) > 2.2:
+            if not p.path or p.task_ticks % 2 == 0:
+                self._go(p, "petition", (me.x + self.rng.uniform(-1.2, 1.2), me.y + self.rng.uniform(-1.2, 1.2)))
+                p.task = "petition"
+            pet.arrived = False
+        else:
+            p.path = []
+            if not pet.arrived:
+                pet.arrived = True
+
+    def _daily_troubles(self) -> None:
+        for pet in self.petitions.values():
+            if pet.status == "open" and self.day - pet.day >= 2:
+                pet.status = "expired"
+                person = self.people.get(pet.person_id)
+                if person is not None and person.task == "petition":
+                    person.task = "idle"
+                    person.remember("Rahbarimiz javob bermadi, o'zimiz hal qilishga urindik")
+        if self.player is None:
+            return
+        for s in self.settlements.values():
+            if s.abandoned or s.population < 5:
+                continue
+            adults = [p for p in self.people.values() if p.alive and p.settlement_id == s.id and p.adult and not p.player]
+            if not adults:
+                continue
+            if s.storage.food < s.population * 0.3 and any(p.hunger < 30 for p in adults):
+                self._raise(self.rng.choice(adults), "famine", "Omborda ovqat tugab qoldi, bolalar och. Nima qilaylik?")
+        for p in self.living:
+            if p.player or not p.adult:
+                continue
+            if p.health < 35:
+                self._raise(p, "sick", "Kasal bo'lib qoldim, ahvolim og'ir. Nima qilay?")
+            elif (
+                p.partner_id is None and 24 <= p.age_years <= 40
+                and self._courtship_target(p) is None and self.rng.random() < 0.05
+            ):
+                self._raise(p, "lonely", "Oila qurmoqchiman, lekin munosib juft topolmayapman. Maslahat bering.")
+
+    def _directed_origin(self, s: Settlement | None, resource: str) -> tuple[float, float] | None:
+        if s is None:
+            return None
+        direction = s.directives.get(resource)
+        if not direction:
+            return None
+        w = self.world
+        offsets = {"north": (0, -24), "south": (0, 24), "east": (24, 0), "west": (-24, 0)}
+        if direction in offsets:
+            dx, dy = offsets[direction]
+            return (min(w.width - 2, max(1, s.x + dx)), min(w.height - 2, max(1, s.y + dy)))
+        kinds = {"water": Terrain.WATER, "forest": Terrain.FOREST, "rocks": Terrain.ROCK}
+        target = kinds.get(direction)
+        if target is None:
+            return None
+        found = w.nearest(s.x, s.y, lambda i: w.terrain[i] == target, radius=60)
+        return (float(found[0]), float(found[1])) if found else None
+
+    def _teach(self, key: str, teacher: Person | None) -> list[str]:
+        """Teaches a technology and anything it rests on."""
+        taught: list[str] = []
+        tech = TECH_BY_KEY.get(key)
+        if tech is None or key in self.known:
+            return taught
+        for need in tech.requires:
+            taught += self._teach(need, teacher)
+        self.known.add(key)
+        taught.append(tech.name)
+        who = f"{teacher.name} {teacher.surname}" if teacher else "Rahbar"
+        self.log(f"O'RGATILDI: {tech.name}. {who} xalqqa o'rgatdi — {tech.story}", "discovery")
+        if teacher is not None:
+            teacher.discoveries += 1
+        return taught
+
+    def _migrate_now(self, asker: Person, direction: str) -> bool:
+        s = self.settlements.get(asker.settlement_id) if asker.settlement_id else None
+        if s is None:
+            return False
+        offsets = {"north": (0, -30), "south": (0, 30), "east": (30, 0), "west": (-30, 0)}
+        if direction in offsets:
+            dx, dy = offsets[direction]
+            origin = (s.x + dx, s.y + dy)
+            site = self._best_site(origin, 0, 18)
+        else:
+            site = self._best_site((s.x, s.y), 16, 40)
+        if math.hypot(site[0] - s.x, site[1] - s.y) < 12:
+            return False
+        head = asker
+        partner = self.people.get(head.partner_id) if head.partner_id else None
+        kids = [self.people[c] for c in head.children_ids if c in self.people and self.people[c].alive and not self.people[c].adult]
+        group = [head] + ([partner] if partner and partner.alive else []) + kids
+        singles = [
+            p for p in self.people.values()
+            if p.alive and p.settlement_id == s.id and p.adult and p.partner_id is None
+            and p.age_years < 30 and p not in group and not p.player
+        ]
+        group += singles[:3]
+        new = self._found_settlement(site, [p.id for p in group])
+        new.storage.food = s.storage.food * 0.2
+        s.storage.food -= new.storage.food
+        for member in group:
+            old_home = member.home_id
+            member.settlement_id = new.id
+            member.home_id = None
+            member.task = "migrate"
+            member.task_ticks = 0
+            member.path = []
+            self._decide(member)
+            member.remember(f"Rahbarimiz maslahati bilan {new.name}ga ko'chdik")
+            if old_home is not None:
+                self._vacate(old_home, [member])
+        self.log(f"YANGI MANZIL: rahbar maslahati bilan {head.name} {head.surname} {len(group)} kishi bilan {new.name}ga asos soldi", "settlement")
+        return True
+
+    def leader_says(self, text: str, petition_id: int | None = None, person_id: int | None = None) -> dict:
+        """The leader's words, to one petitioner, one person, or everyone."""
+        me = self.player
+        pet = self.petitions.get(petition_id) if petition_id else None
+        if pet is not None and pet.status != "open":
+            return {"ok": False, "reply": "Bu murojaat allaqachon yopilgan"}
+        asker = self.people.get(pet.person_id) if pet else (self.people.get(person_id) if person_id else None)
+        if asker is not None and not asker.alive:
+            asker = None
+        names = [p.name for p in self.living if p.adult and not p.player]
+        order = understand(text, names=names)
+        who = asker.name if asker else "Xalq"
+        if order.empty:
+            hint = HELP_BY_KIND.get(pet.kind, "") if pet else (
+                "Masalan: «dehqonchilikni o'rgataman», «o'rmonni asranglar», «shimolga borib o'tin kesinglar», "
+                "«hammaga qurilishni o'rgataman»."
+            )
+            return {"ok": False, "reply": f"{who}: «Kechirasiz, tushunmadim.» {hint}"}
+
+        if asker is None:
+            # Words to the whole people: deeds that belong to one family do not apply.
+            order.migrate = None
+            order.build_here = False
+            order.heal = False
+            order.marry = None
+            if order.empty:
+                return {"ok": False, "reply": "Xalq: «Kechirasiz, tushunmadim.» Masalan: «dehqonchilikni o'rgataman»."}
+        lines = describe(order)
+        notes: list[str] = []
+        for key in order.lessons:
+            if not self._teach(key, me):
+                notes.append(f"{TECH_BY_KEY[key].name}ni allaqachon bilamiz")
+        for key in order.customs:
+            if not self.has(key):
+                self.customs.append(Custom(key=key, text=CUSTOM_TEXT[key], day=self.day))
+        if order.fishing and not self.has("fishing"):
+            self.customs.append(Custom(key="fishing", text="Ovqat kam bo'lsa, baliq tutamiz", day=self.day))
+        home_s = self.settlements.get(asker.settlement_id) if asker and asker.settlement_id else (
+            self.settlements.get(me.settlement_id) if me and me.settlement_id else None
+        )
+        if order.skills:
+            pupils = (
+                [p for p in self.living if p.adult and not p.player and (p.settlement_id == home_s.id if home_s else True)]
+                if order.everyone or asker is None else [asker]
+            )
+            for pupil in pupils:
+                for skill in order.skills:
+                    pupil.skills[skill] = min(100.0, pupil.skill(skill) + 15)
+        if order.gather and home_s is not None:
+            home_s.directives.update(order.gather)
+        if order.migrate is not None and asker is not None:
+            if not self._migrate_now(asker, order.migrate):
+                notes.append("lekin yaqinda yaxshi joy topilmadi")
+        if order.build_here and asker is not None and me is not None and home_s is not None:
+            kind = self.choose_home(asker, home_s, self._stone_reachable(home_s))
+            if kind is None or self._place(home_s, kind, near=(int(me.x), int(me.y)), owner=asker) is None:
+                notes.append("lekin bu yer qurilishga yaroqsiz")
+        if order.share_food and home_s is not None:
+            donors = [s for s in self.settlements.values() if s is not home_s and not s.abandoned and s.storage.food > s.population * 3]
+            if donors:
+                donor = max(donors, key=lambda s: s.storage.food)
+                gift = donor.storage.food * 0.3
+                donor.storage.food -= gift
+                home_s.storage.food += gift
+                self.log(f"{donor.name} {home_s.name}ga {int(gift)} ovqat yubordi (rahbar ko'rsatmasi)", "politics")
+            else:
+                notes.append("lekin boshqa qishloqlarda ortiqcha ovqat yo'q")
+        if order.heal and asker is not None:
+            asker.health = min(100.0, asker.health + 30)
+            asker.energy = min(100.0, asker.energy + 20)
+        if order.marry and asker is not None:
+            bride = next((p for p in self.living if p.name == order.marry and p.adult and not p.player), None)
+            if bride and bride.gender != asker.gender and bride.partner_id is None and asker.partner_id is None:
+                self._marry(asker, bride)
+            else:
+                notes.append(f"lekin {order.marry} bilan turmush qurib bo'lmaydi")
+
+        if pet is not None:
+            pet.status = "solved"
+            pet.answer = text
+        if asker is not None:
+            asker.remember(f"Rahbarimiz aytdi: «{text}»")
+            asker.wisdom += 2
+            asker.awareness = min(100.0, asker.awareness + 1.5)
+            if asker.task == "petition":
+                asker.task = "idle"
+                asker.task_ticks = 0
+        reply = "Tushundim! " + "; ".join(lines + notes)
+        if pet is not None:
+            pet.reply = reply
+        target = f"{asker.name}ga" if asker else "xalqqa"
+        self.log(f"Rahbar {target}: «{text}» — {reply}", "politics")
+        return {"ok": True, "reply": f"{who}: «{reply}»"}
+
+    def petitions_payload(self) -> list[dict]:
+        out = []
+        for pet in sorted(self.petitions.values(), key=lambda x: -x.id)[:12]:
+            person = self.people.get(pet.person_id)
+            out.append({
+                "id": pet.id,
+                "person_id": pet.person_id,
+                "name": f"{person.name} {person.surname}" if person else "?",
+                "settlement": self.settlements[pet.settlement_id].name if pet.settlement_id in self.settlements else "",
+                "kind": pet.kind,
+                "text": pet.text,
+                "day": pet.day,
+                "status": pet.status,
+                "arrived": pet.arrived,
+                "answer": pet.answer,
+                "reply": pet.reply,
+            })
+        return out
+
+    def customs_payload(self) -> list[dict]:
+        return [{"key": c.key, "text": c.text, "day": c.day} for c in self.customs]
 
     # -- animals ---------------------------------------------------------------
 
@@ -1370,6 +1683,7 @@ class Civilization:
             if self._place(s, kind, near=near, owner=head) is not None:
                 head.remember("Oilamiz uchun uy qurishni boshladik")
                 return
+            self._raise(head, "no_plot", "Uy qurishga bo'sh joy topolmayapmiz. Qayerga quraylik?")
 
         # 2. The commons, in the order a growing place needs them.
         wishes: list[tuple[str, bool]] = [
@@ -1393,7 +1707,7 @@ class Civilization:
     # -- the day -----------------------------------------------------------
 
     def _new_day(self) -> None:
-        self.world.regrow(self.rng)
+        self.world.regrow(self.rng, self.has("forest_care"))
         for s in self.settlements.values():
             # Food spoils; pottery and granaries keep more of it.
             keep = 0.96
@@ -1421,6 +1735,7 @@ class Civilization:
             self._mortality(p)
         self._marriages()
         self._births()
+        self._daily_troubles()
         for p in self.living:
             self._reflect(p)
         self._emigrate()
@@ -1518,7 +1833,7 @@ class Civilization:
                 continue
             gender = "male" if self.rng.random() < 0.51 else "female"
             child = self._make_person(
-                gender=gender, surname=father.surname, age_years=0.0,
+                gender=gender, surname=surname_for(father.surname, "male"), age_years=0.0,
                 x=mother.x, y=mother.y, parents=(mother, father),
             )
             child.parent_ids = [mother.id, father.id]
@@ -1783,6 +2098,9 @@ class Civilization:
             "deaths": self.deaths,
             "last_emigration_day": {str(k): v for k, v in self.last_emigration_day.items()},
             "animals": [encode(a) for a in self.animals.values()],
+            "petitions": [encode(x) for x in self.petitions.values()],
+            "customs": [encode(c) for c in self.customs],
+            "next_petition": self.next_petition,
             "subsecond": self.subsecond,
             "player_id": self.player_id,
             "rng": list(self.rng.getstate()[1]),
@@ -1799,6 +2117,10 @@ class Civilization:
         civ.people = {}
         for item in data["people"]:
             person = decode_dataclass(Person, item)
+            # Older saves gave women their father's form of the family name.
+            person.surname = surname_for(person.surname, person.gender)
+            if person.gender == "female" and person.name in MALE_NAMES:
+                person.name = FEMALE_NAMES[person.id % len(FEMALE_NAMES)]
             person.goals = [g if isinstance(g, Goal) else Goal(**g) for g in person.goals]
             civ.people[person.id] = person
         civ.buildings = {}
@@ -1835,6 +2157,12 @@ class Civilization:
             animal = decode_dataclass(Animal, item)
             civ.animals[animal.id] = animal
         civ.subsecond = data.get("subsecond", 0.0)
+        civ.petitions = {}
+        for item in data.get("petitions", []):
+            pet = decode_dataclass(Petition, item)
+            civ.petitions[pet.id] = pet
+        civ.customs = [decode_dataclass(Custom, item) for item in data.get("customs", [])]
+        civ.next_petition = data.get("next_petition", max(civ.petitions, default=0) + 1)
         civ.auto_move = True
         civ.player_id = data.get("player_id")
         civ.saved_at = data.get("saved_at")

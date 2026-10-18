@@ -32,10 +32,18 @@ Eski "boshqariladigan shahar" rejimi ham saqlangan: `WORLD_MODE=city`.
   menyusidan istalgan binoni tanlab, yerga qo'yasiz ("Darhol qurish" — resurssiz).
   Odamlar bilan gaplashib, yaqinlashgach turmush taklif qilasiz: oilangizda
   farzandlar tug'iladi. "Avto" qahramoningizni o'zi yashashga qo'yadi.
+- **Siz — xalq rahbarisiz**: kimdir muammoga duch kelsa (o'tin/tosh tugadi, uy uchun
+  joy yo'q, ochlik, kasallik, juft topolmayapti), u yoningizga keladi va so'raydi.
+  "📜 Murojaat" tugmasini bosib, o'z so'zingiz bilan javob berasiz: «shimolga borib
+  o'tin kes», «baliq tutinglar», «dehqonchilikni o'rgataman», «shu yerga uy quring»,
+  «yangi joyga ko'chinglar». Tushunsa — «Tushundim!» deb bajaradi, tushunmasa —
+  misollar bilan qayta so'raydi. Xalqqa bilim (texnologiya, mahorat) va odatlar
+  («o'rmonni asranglar», «bolalarni o'qitinglar», «zaxira to'planglar», «hashar
+  qilinglar») o'rgatasiz — ular shu bilan ishlaydi.
 - **Hayvonlar va qushlar**: otlar podasi, tulkilar, laylak, flamingo va to'tiqushlar.
 - **Haqiqiy odamlar**: kameraga yaqin 14 kishi realistik 3D tanada (yurish/turish
   animatsiyasi), uzoqdagilar yengil figura bo'ladi.
-- Dunyo har yili `backend/civ_world.json` (Docker'da `/data/civ_world.json`) fayliga
+- Dunyo har daqiqada `backend/civ_world.json` (Docker'da `/data/civ_world.json`) fayliga
   saqlanadi. "Yangi dunyo" tugmasi 10 kishi bilan qaytadan boshlaydi.
 
 ## Internetga joylash (3 daqiqa)
@@ -183,3 +191,9 @@ optimizatsiya, saylov tizimi.
 - Ot, laylak, flamingo, to'tiqush: three.js namunalari (`examples/models/gltf`).
 - Tulki: Khronos glTF Sample Assets, **CC-BY 4.0** — PixelMannen (model),
   tomkranis (rig va animatsiya).
+- Yer, bino va daraxt po'stlog'i teksturalari: Poly Haven, **CC0**
+  (`frontend/public/textures/`). Suv normal xaritasi: three.js namunalari.
+
+> Render'da dunyo saqlanib qolishi uchun xizmatda `/data` diski bo'lishi kerak
+> (`render.yaml`dagi `disk`, Starter tarifi). Bepul tarifda disk yo'q: har deploy'da
+> dunyo qaytadan boshlanadi.

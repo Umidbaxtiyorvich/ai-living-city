@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { act, civPost, useCiv } from "./store";
+import { LeaderPanel } from "./LeaderPanel";
 
 /** 1× is real life; the rest are for watching years go by. */
 const SPEEDS: [number, string][] = [
@@ -7,6 +8,7 @@ const SPEEDS: [number, string][] = [
   [1, "Haqiqiy"],
   [10, "10×"],
   [60, "1 daq/s"],
+  [100, "100×"],
   [360, "6 daq/s"],
   [1440, "1 kun/min"],
 ];
@@ -197,6 +199,9 @@ export function CivHud() {
   const [busy, setBusy] = useState(false);
   // On a phone the stats panel would cover the world; it opens on demand.
   const [showStats, setShowStats] = useState(() => window.innerWidth > 760);
+  const [showLeader, setShowLeader] = useState(false);
+  const waiting = useCiv((s) => s.petitions.filter((p) => p.status === "open").length);
+  const playerId = useCiv((s) => s.playerId);
 
   if (!stats || !time) return null;
 
@@ -224,6 +229,11 @@ export function CivHud() {
             </button>
           ))}
         </div>
+        {playerId != null && (
+          <button className={`civ-leader-toggle ${waiting ? "alert" : ""}`} onClick={() => setShowLeader(!showLeader)}>
+            📜 {waiting ? `Murojaat: ${waiting}` : "Rahbar"}
+          </button>
+        )}
         <button className="civ-stats-toggle" onClick={() => setShowStats(!showStats)}>
           {showStats ? "✕" : "📊"}
         </button>
@@ -302,6 +312,7 @@ export function CivHud() {
 
       <Inspector />
       <PlayerPanel />
+      {showLeader && <LeaderPanel onClose={() => setShowLeader(false)} />}
     </div>
   );
 }

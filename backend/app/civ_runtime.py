@@ -26,10 +26,13 @@ from .jsonutil import dumps
 
 #: 1× is real time: one simulated second per real second, the clock in step
 #: with Tashkent. The faster speeds are for watching generations pass.
-SPEEDS = (0, 1, 10, 60, 360, 1440)
+SPEEDS = (0, 1, 10, 60, 100, 360, 1440)
 BROADCAST_INTERVAL = 0.1
 TICK_SECONDS = MINUTES_PER_TICK * 60.0
 TASHKENT = timezone(timedelta(hours=5))
+#: Real seconds between saves. Frequent enough that a deploy or crash loses
+#: at most a minute of history; the file is written atomically.
+SAVE_EVERY_SECONDS = 60.0
 #: How much missed time a restarted server catches up on.
 MAX_CATCH_UP_SECONDS = 2 * 24 * 3600
 
@@ -56,6 +59,7 @@ class CivRuntime:
         self._sent_buildings = -1
         self._last_resources = 0.0
         self._last_save_day = 0
+        self._last_save_time = time.time()
         self._debt = 0.0
         self.tick_ms = 0.0
 
@@ -130,6 +134,7 @@ class CivRuntime:
         except OSError as error:
             return {"saved": False, "error": str(error)}
         self._last_save_day = data["tick"] // TICKS_PER_DAY
+        self._last_save_time = time.time()
         return {"saved": True, "year": self.civ.year}
 
     # -- loop --------------------------------------------------------------
@@ -162,7 +167,7 @@ class CivRuntime:
                         self.tick_ms = (time.perf_counter() - started) * 1000 / steps
                     payload = self._frame()
                 await self._broadcast(payload)
-                if self.civ.day - self._last_save_day >= DAYS_PER_YEAR:
+                if time.time() - self._last_save_time >= SAVE_EVERY_SECONDS:
                     await self.save()
         except asyncio.CancelledError:
             return
@@ -180,6 +185,8 @@ class CivRuntime:
             "animals": [a.compact() for a in civ.animals.values()],
             "player_id": civ.player_id,
             "player_auto": bool(civ.player.auto) if civ.player else False,
+            "petitions": civ.petitions_payload(),
+            "customs": civ.customs_payload(),
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -287,6 +294,12 @@ class CivRuntime:
                 return {"reply": civ.player_talk(int(args["id"]))}
             if action == "propose":
                 return {"reply": civ.player_propose(int(args["id"]))}
+            if action == "say":
+                return civ.leader_says(
+                    str(args["text"]),
+                    petition_id=int(args["petition"]) if args.get("petition") else None,
+                    person_id=int(args["id"]) if args.get("id") else None,
+                )
         return {"reply": "Noma'lum buyruq"}
 
     async def reset(self) -> dict:

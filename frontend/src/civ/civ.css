@@ -205,3 +205,43 @@
   .civ-player .civ-hint { display: none; }
   .civ-left { top: 110px; max-height: 45%; z-index: 2; }
 }
+
+/* -- the leader ------------------------------------------------------------ */
+.civ-leader {
+  top: 84px;
+  right: 12px;
+  width: 340px;
+  max-height: calc(100% - 260px);
+  overflow: auto;
+  padding: 14px;
+  z-index: 3;
+}
+.civ-leader-head { display: flex; justify-content: space-between; align-items: center; }
+.civ-leader-head h2 { margin: 0; }
+.civ-leader-toggle.alert { background: #c2563a; border-color: #e07a5a; animation: civ-pulse 1.4s ease-in-out infinite; }
+@keyframes civ-pulse { 50% { box-shadow: 0 0 0 6px rgba(224, 122, 90, 0.25); } }
+.civ-petition { background: rgba(255, 255, 255, 0.05); border-radius: 10px; padding: 8px 10px; margin: 6px 0; }
+.civ-petition.here { border: 1px solid rgba(232, 198, 106, 0.6); }
+.civ-petition.done { opacity: 0.8; }
+.civ-petition p { margin: 4px 0; }
+.civ-petition-top { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #a8a294; }
+.civ-link { background: none !important; border: none !important; padding: 0 !important; color: #f1ece2; font-weight: 600; }
+.civ-answer { display: flex; gap: 6px; flex-wrap: wrap; }
+.civ-answer input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.35);
+  color: #f1ece2;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font: inherit;
+}
+.civ-reply { width: 100%; margin: 6px 0 0; font-size: 12px; color: #cfe3ff; }
+.civ-examples { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.civ-examples button { font-size: 11px; padding: 3px 7px; }
+.civ-customs { list-style: none; margin: 0; padding: 0; font-size: 12px; color: #b8f0c8; }
+.civ-customs li { padding: 2px 0; }
+@media (max-width: 760px) {
+  .civ-leader { left: 12px; right: 12px; width: auto; top: 110px; max-height: 55%; }
+}

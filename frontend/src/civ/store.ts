@@ -25,6 +25,26 @@ export interface Looks {
   height: number;
 }
 
+export interface Petition {
+  id: number;
+  person_id: number;
+  name: string;
+  settlement: string;
+  kind: string;
+  text: string;
+  day: number;
+  status: string;
+  arrived: boolean;
+  answer: string;
+  reply: string;
+}
+
+export interface CustomRule {
+  key: string;
+  text: string;
+  day: number;
+}
+
 export interface CivBuilding {
   id: number;
   kind: string;
@@ -114,6 +134,8 @@ export interface CivFrame {
   player_id?: number | null;
   player_auto?: boolean;
   blueprints?: Blueprint[];
+  petitions?: Petition[];
+  customs?: CustomRule[];
 }
 
 interface CivStore {
@@ -133,6 +155,8 @@ interface CivStore {
   playerId: number | null;
   playerAuto: boolean;
   blueprints: Blueprint[];
+  petitions: Petition[];
+  customs: CustomRule[];
   /** Blueprint being placed with the next click on the ground. */
   placing: string | null;
   creative: boolean;
@@ -171,6 +195,8 @@ export const useCiv = create<CivStore>((set, get) => ({
   playerId: null,
   playerAuto: false,
   blueprints: [],
+  petitions: [],
+  customs: [],
   placing: null,
   creative: false,
   message: "",
@@ -218,6 +244,8 @@ export const useCiv = create<CivStore>((set, get) => ({
     }
     if (frame.blueprints) patch.blueprints = frame.blueprints;
     if (frame.player_auto !== undefined) patch.playerAuto = frame.player_auto;
+    if (frame.petitions) patch.petitions = frame.petitions;
+    if (frame.customs) patch.customs = frame.customs;
     if (frame.looks && frame.looks.length) {
       const looks = new Map(patch.looks ?? state.looks);
       for (const item of frame.looks) looks.set(item.id, item);

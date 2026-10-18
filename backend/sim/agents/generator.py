@@ -28,19 +28,29 @@ MALE_NAMES: tuple[str, ...] = (
 FEMALE_NAMES: tuple[str, ...] = (
     "Aziza", "Barno", "Dilnoza", "Elnora", "Feruza", "Gulnora", "Hulkar",
     "Iroda", "Jamila", "Kamola", "Lola", "Malika", "Nargiza", "Oysha",
-    "Qunduz", "Ra'no", "Sevara", "Tursunoy", "Umida", "Vazira", "Yulduz",
-    "Zulfiya", "Anora", "Bibisora", "Dildora", "Enajon", "Farida", "Gavhar",
+    "Madina", "Ra'no", "Sevara", "Tursunoy", "Umida", "Vazira", "Yulduz",
+    "Zulfiya", "Anora", "Bibisora", "Dildora", "Sitora", "Farida", "Gavhar",
     "Hilola", "Intizor", "Jasmina", "Komila", "Mohira", "Nilufar", "Ozoda",
-    "Rayhona", "Shahnoza", "Tabassum", "Umirzoq", "Xadicha", "Yorqinoy", "Zebo",
+    "Rayhona", "Shahnoza", "Tabassum", "Laylo", "Xadicha", "Yorqinoy", "Zebo",
+    "Mohinur", "Munisa", "Shahzoda", "Robiya", "Durdona", "Nodira", "Saodat",
+    "Maftuna", "Gulchehra", "Dilfuza", "Charos", "Zarina", "Muxlisa", "Sabina",
 )
 
 #: Family names. Children inherit theirs from the family.
 SURNAMES: tuple[str, ...] = (
-    "Karimov", "Rasulov", "Yusupov", "Tosheva", "Nazarov", "Aliyev", "Sobirov",
+    "Karimov", "Rasulov", "Yusupov", "Toshev", "Nazarov", "Aliyev", "Sobirov",
     "Ergashev", "Qodirov", "Islomov", "Xolmatov", "Jo'rayev", "Mahmudov",
     "Saidov", "Tursunov", "Umarov", "Vohidov", "Yo'ldoshev", "Zaripov",
     "Abdullayev", "Bekmurodov", "Davlatov", "Faxriddinov", "G'ulomov",
 )
+
+def surname_for(surname: str, gender: str) -> str:
+    """Uzbek family names take -a for women: Karimov → Karimova, Aliyev → Aliyeva."""
+    base = surname[:-1] if surname.endswith(("ova", "eva")) else surname
+    if gender == "female" and base.endswith(("ov", "ev")):
+        return base + "a"
+    return base
+
 
 #: Stable temperament traits, 0..1.
 PERSONALITY_TRAITS: tuple[str, ...] = (
