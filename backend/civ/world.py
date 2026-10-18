@@ -53,6 +53,11 @@ STEP_COST = {
     Terrain.BUILT: 0.8,
 }
 
+#: The same costs as a flat list indexed by terrain number; None = impassable.
+#: Routing reads this in its inner loop, where an Enum lookup per neighbour
+#: was most of the cost.
+_COST: list[float | None] = [STEP_COST.get(Terrain(t)) if Terrain(t) in WALKABLE else None for t in range(len(Terrain))]
+
 #: Footfall at which grass wears into a path.
 PATH_THRESHOLD = 60.0
 
@@ -224,9 +229,9 @@ class World:
 
     # -- change ------------------------------------------------------------
 
-    def walk_over(self, x: int, y: int) -> None:
+    def walk_over(self, x: int, y: int, amount: float = 1.0) -> None:
         i = y * self.width + x
-        self.footfall[i] += 1.0
+        self.footfall[i] += amount
         t = self.terrain[i]
         if (
             self.footfall[i] >= PATH_THRESHOLD
@@ -260,7 +265,7 @@ class World:
             self.dirty.add(i)
         return got
 
-    def regrow(self, rng: random.Random) -> None:
+    def regrow(self, rng: random.Random, tended: bool = False) -> None:
         """Daily: bushes refill, forests spread a little, paths fade if unused."""
         w = self.width
         for i, value in enumerate(self.berries):
@@ -273,7 +278,7 @@ class World:
             t = self.terrain[i]
             if t == Terrain.FOREST and self.wood[i] < MAX_WOOD:
                 self.wood[i] = min(MAX_WOOD, self.wood[i] + 0.25)
-            elif t == Terrain.GRASS and rng.random() < 0.004:
+            elif t == Terrain.GRASS and rng.random() < (0.012 if tended else 0.004):
                 x, y = i % w, i // w
                 neighbours = sum(
                     1
@@ -299,6 +304,9 @@ class World:
         if not self.walkable(*goal):
             return []
         w = self.width
+        h = self.height
+        terrain = self.terrain
+        costs = _COST
         open_heap: list[tuple[float, int, int, int]] = [(0.0, 0, start[0], start[1])]
         came: dict[int, int] = {}
         cost: dict[int, float] = {start[1] * w + start[0]: 0.0}
@@ -314,7 +322,7 @@ class World:
                     path.append((i % w, i // w))
                     i = came[i]
                 path.reverse()
-                return path
+                return self._smooth(start, path)
             expanded += 1
             base = cost[i]
             for dx, dy, diag in (
@@ -322,17 +330,15 @@ class World:
                 (1, 1, 1.41), (1, -1, 1.41), (-1, 1, 1.41), (-1, -1, 1.41),
             ):
                 nx, ny = x + dx, y + dy
-                if not self.inside(nx, ny):
+                if nx < 0 or ny < 0 or nx >= w or ny >= h:
                     continue
                 ni = ny * w + nx
-                t = self.terrain[ni]
-                if t not in WALKABLE:
+                step = costs[terrain[ni]]
+                if step is None:
                     continue
-                if diag > 1 and (
-                    self.terrain[y * w + nx] not in WALKABLE or self.terrain[ny * w + x] not in WALKABLE
-                ):
+                if diag > 1 and (costs[terrain[y * w + nx]] is None or costs[terrain[ny * w + x]] is None):
                     continue
-                new_cost = base + STEP_COST.get(Terrain(t), 1.0) * diag
+                new_cost = base + step * diag
                 if new_cost < cost.get(ni, 1e18):
                     cost[ni] = new_cost
                     came[ni] = i
@@ -340,6 +346,45 @@ class World:
                     estimate = new_cost + math.hypot(goal[0] - nx, goal[1] - ny) * 0.55
                     heapq.heappush(open_heap, (estimate, counter, nx, ny))
         return []
+
+    def _clear_line(self, a: tuple[int, int], b: tuple[int, int]) -> bool:
+        """Whether a straight walk from a to b stays on walkable land."""
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        steps = int(max(abs(dx), abs(dy)) * 3) + 1
+        for k in range(1, steps + 1):
+            t = k / steps
+            x = int(round(a[0] + dx * t))
+            y = int(round(a[1] + dy * t))
+            if not self.walkable(x, y):
+                return False
+        return True
+
+    def _smooth(self, start: tuple[int, int], path: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        """
+        String-pulling: drop waypoints a person could simply walk past.
+
+        A* on a grid returns staircase routes; people walk in straight lines
+        and only turn where something is in the way. Paths are kept, though:
+        a route that follows a worn path is cheaper, so it is not shortcut
+        across rough ground.
+        """
+        if len(path) < 3:
+            return path
+        out: list[tuple[int, int]] = []
+        anchor = start
+        i = 0
+        while i < len(path):
+            j = i
+            # Extend the straight segment as far as it stays clear (bounded look-ahead).
+            while j + 1 < len(path) and j + 1 - i < 24 and self._clear_line(anchor, path[j + 1]):
+                on_path = self.terrain[path[j + 1][1] * self.width + path[j + 1][0]] == Terrain.PATH
+                if on_path and self.terrain[anchor[1] * self.width + anchor[0]] != Terrain.PATH:
+                    break
+                j += 1
+            out.append(path[j])
+            anchor = path[j]
+            i = j + 1
+        return out
 
     # -- payloads ----------------------------------------------------------
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { Html, OrbitControls } from "@react-three/drei";
+import { Html, OrbitControls, Sky, Stars } from "@react-three/drei";
 import { Color, type DirectionalLight, type HemisphereLight, Vector3 } from "three";
 import { Ground, Nature } from "./Land";
 import { People, bodies } from "./People";
@@ -20,6 +20,20 @@ const DUSK_SKY = new Color("#e8a070");
 const NIGHT_SKY = new Color("#1a2a44");
 
 /** Sun, sky and fog follow the simulated hour. */
+/** A physically based sky whose sun follows the clock, and stars after dark. */
+function Heavens() {
+  const hour = useCiv((s) => Math.round((s.time?.hour ?? 12) * 4) / 4);
+  const angle = ((hour - 6) / 12) * Math.PI;
+  const sun: [number, number, number] = [Math.cos(angle) * 100, Math.sin(angle) * 100, 40];
+  const night = hour >= 20.5 || hour < 5;
+  return (
+    <>
+      <Sky distance={450} sunPosition={sun} turbidity={6} rayleigh={night ? 0.2 : 1.4} mieCoefficient={0.006} mieDirectionalG={0.85} />
+      {night && <Stars radius={300} depth={60} count={2500} factor={5} fade speed={0.3} />}
+    </>
+  );
+}
+
 function Daylight() {
   const sun = useRef<DirectionalLight>(null);
   const hemi = useRef<HemisphereLight>(null);
@@ -190,6 +204,7 @@ export function CivScene() {
         if (import.meta.env.DEV) (window as unknown as { __civ3: unknown }).__civ3 = three;
       }}
     >
+      <Heavens />
       <Daylight />
       <Ground />
       <Nature />

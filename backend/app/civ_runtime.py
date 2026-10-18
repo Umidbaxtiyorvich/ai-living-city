@@ -22,14 +22,28 @@ from civ.catalog import BLUEPRINTS
 from civ.engine import TASK_LABELS, Civilization
 from civ.models import DAYS_PER_YEAR, MINUTES_PER_TICK, TICKS_PER_DAY
 
+from . import civ_store
 from .jsonutil import dumps
 
 #: 1× is real time: one simulated second per real second, the clock in step
 #: with Tashkent. The faster speeds are for watching generations pass.
-SPEEDS = (0, 1, 10, 60, 360, 1440)
+SPEEDS = (0, 1, 10, 60, 100, 360, 1440)
 BROADCAST_INTERVAL = 0.1
 TICK_SECONDS = MINUTES_PER_TICK * 60.0
+#: The 100× button is "a year a second": one game year (12 days) per real second.
+YEAR_SECONDS = DAYS_PER_YEAR * 24 * 3600.0
+#: Above this many simulated seconds per real second, people are moved once per
+#: tick instead of continuously — at a year a second nobody can see the steps.
+FAST_RATE = 3600.0
+
+
+def sim_rate(speed: int) -> float:
+    """Simulated seconds per real second for a speed button."""
+    return YEAR_SECONDS if speed == 100 else float(speed)
 TASHKENT = timezone(timedelta(hours=5))
+#: Real seconds between saves. Frequent enough that a deploy or crash loses
+#: at most a minute of history; the file is written atomically.
+SAVE_EVERY_SECONDS = 60.0
 #: How much missed time a restarted server catches up on.
 MAX_CATCH_UP_SECONDS = 2 * 24 * 3600
 
@@ -55,21 +69,27 @@ class CivRuntime:
         self._lock = asyncio.Lock()
         self._sent_buildings = -1
         self._last_resources = 0.0
+        self._last_buildings = 0.0
+        self._signatures: dict[str, str] = {}
+        #: Per browser: the newest unsent frame and a wake-up for its sender.
+        self._outbox: dict[WebSocket, dict] = {}
         self._last_save_day = 0
+        self._last_save_time = time.time()
         self._debt = 0.0
         self.tick_ms = 0.0
 
     # -- lifecycle ---------------------------------------------------------
 
     def start(self) -> None:
-        path = _save_path()
-        if path.is_file():
-            try:
-                self.civ = Civilization.restore(json.loads(path.read_text(encoding="utf-8")))
-                print(f"Tsivilizatsiya davom etadi: {self.civ.year}-yil, {len(self.civ.living)} kishi", flush=True)
-            except Exception as error:  # a broken save must not stop the server
-                print(f"Saqlangan dunyo o'qilmadi ({error}); yangi dunyo.", flush=True)
-                self.civ = None
+        try:
+            data = self._read_saved()
+            if data is not None:
+                self.civ = Civilization.restore(data)
+                where = "bazadan" if civ_store.enabled() else "fayldan"
+                print(f"Tsivilizatsiya davom etadi ({where}): {self.civ.year}-yil, {len(self.civ.living)} kishi", flush=True)
+        except Exception as error:  # a broken save must not stop the server
+            print(f"Saqlangan dunyo o'qilmadi ({error}); yangi dunyo.", flush=True)
+            self.civ = None
         if self.civ is None:
             self._new_world()
         else:
@@ -77,6 +97,16 @@ class CivRuntime:
             self._catch_up()
         self.civ.auto_move = False
         self._last_save_day = self.civ.day
+
+    @staticmethod
+    def _read_saved() -> dict | None:
+        """The saved world: from the database when one is configured, else the file."""
+        if civ_store.enabled():
+            return civ_store.load()
+        path = _save_path()
+        if path.is_file():
+            return json.loads(path.read_text(encoding="utf-8"))
+        return None
 
     def _catch_up(self) -> None:
         """Life went on while the server slept: replay the missed hours, up to two days."""
@@ -120,6 +150,9 @@ class CivRuntime:
         path = _save_path()
 
         def write() -> None:
+            if civ_store.enabled():
+                civ_store.save(data)
+                return
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
@@ -127,42 +160,63 @@ class CivRuntime:
 
         try:
             await asyncio.to_thread(write)
-        except OSError as error:
+        except Exception as error:  # a failed save is reported, never fatal
+            print(f"Saqlash muvaffaqiyatsiz: {error}", flush=True)
             return {"saved": False, "error": str(error)}
         self._last_save_day = data["tick"] // TICKS_PER_DAY
+        self._last_save_time = time.time()
         return {"saved": True, "year": self.civ.year}
 
     # -- loop --------------------------------------------------------------
 
     async def _loop(self) -> None:
         last = time.perf_counter()
+        last_broadcast = 0.0
         try:
             while True:
-                await asyncio.sleep(BROADCAST_INTERVAL)
+                rate = sim_rate(self.speed)
+                fast = rate > FAST_RATE
+                # In year-a-second mode the loop runs almost flat out and only
+                # broadcasts ten times a second.
+                await asyncio.sleep(0.004 if fast else BROADCAST_INTERVAL)
                 now = time.perf_counter()
                 elapsed = now - last
                 last = now
                 async with self._lock:
                     civ = self.civ
-                    self._debt += min(elapsed, 1.0) * self.speed
+                    self._debt += min(elapsed, 1.0) * rate
                     started = time.perf_counter()
                     steps = 0
-                    # Walk continuously; run a tick each time ten minutes have passed.
-                    while self._debt > 0 and time.perf_counter() - started < 0.07:
-                        to_tick = TICK_SECONDS - civ.subsecond
-                        chunk = min(self._debt, to_tick, 120.0)
-                        civ.move(chunk)
-                        self._debt -= chunk
-                        if chunk >= to_tick - 1e-6:
+                    if fast:
+                        civ.auto_move = True
+                        while self._debt >= TICK_SECONDS and time.perf_counter() - started < 0.09:
                             civ.step()
+                            self._debt -= TICK_SECONDS
                             steps += 1
-                    if self._debt > TICK_SECONDS * 4:
-                        self._debt = 0.0
+                        civ.auto_move = False
+                        # If the machine cannot keep up, run as fast as it can
+                        # rather than building an endless backlog.
+                        self._debt = min(self._debt, rate * 0.5)
+                    else:
+                        # Walk continuously; run a tick each time ten minutes have passed.
+                        while self._debt > 0 and time.perf_counter() - started < 0.07:
+                            to_tick = TICK_SECONDS - civ.subsecond
+                            chunk = min(self._debt, to_tick, 120.0)
+                            civ.move(chunk)
+                            self._debt -= chunk
+                            if chunk >= to_tick - 1e-6:
+                                civ.step()
+                                steps += 1
+                        if self._debt > TICK_SECONDS * 4:
+                            self._debt = 0.0
                     if steps:
                         self.tick_ms = (time.perf_counter() - started) * 1000 / steps
-                    payload = self._frame()
-                await self._broadcast(payload)
-                if self.civ.day - self._last_save_day >= DAYS_PER_YEAR:
+                    due = now - last_broadcast >= BROADCAST_INTERVAL
+                    payload = self._frame() if due else None
+                if payload is not None:
+                    last_broadcast = now
+                    await self._broadcast(payload)
+                if time.time() - self._last_save_time >= SAVE_EVERY_SECONDS:
                     await self.save()
         except asyncio.CancelledError:
             return
@@ -195,6 +249,8 @@ class CivRuntime:
             "buildings": civ.buildings_payload(),
             "looks": [p.looks() for p in civ.people.values() if p.alive],
             "chronicle": civ.chronicle_payload(60),
+            "petitions": civ.petitions_payload(),
+            "customs": civ.customs_payload(),
             "labels": TASK_LABELS,
             "blueprints": [
                 {
@@ -216,42 +272,87 @@ class CivRuntime:
         if changes:
             payload["terrain_changes"] = changes
         now = time.perf_counter()
-        if changes or now - self._last_resources > 2.0:
-            if changes or now - self._last_resources > 6.0:
-                payload["resources"] = civ.world.resource_payload()
-                self._last_resources = now
-        if civ.buildings_version != self._sent_buildings:
+        # Heavy lists go out only when they changed, and at most once a second:
+        # at a year a second they change on every frame.
+        if (changes and now - self._last_resources > 1.0) or now - self._last_resources > 6.0:
+            payload["resources"] = civ.world.resource_payload()
+            self._last_resources = now
+        if civ.buildings_version != self._sent_buildings and now - self._last_buildings > 1.0:
             self._sent_buildings = civ.buildings_version
+            self._last_buildings = now
             payload["buildings"] = civ.buildings_payload()
-        payload["chronicle"] = civ.chronicle_payload(60)
+        for key, build in (
+            ("chronicle", lambda: civ.chronicle_payload(60)),
+            ("petitions", civ.petitions_payload),
+            ("customs", civ.customs_payload),
+        ):
+            value = build()
+            signature = dumps(value)
+            if self._signatures.get(key) != signature:
+                self._signatures[key] = signature
+                payload[key] = value
         return payload
 
     async def _broadcast(self, payload: dict[str, Any]) -> None:
-        if not self._clients:
-            return
-        message = dumps(payload)
-        dead = []
+        """
+        Hands the frame to every browser's outbox.
+
+        A slow browser never builds a backlog: if its previous frame has not
+        gone out yet, the two are merged — incremental parts (terrain changes,
+        new faces) are kept, everything else is simply the newer state.
+        Without this a busy tab fell minutes behind and kept replaying the past.
+        """
         for client in list(self._clients):
-            try:
-                await client.send_text(message)
-            except Exception:
-                dead.append(client)
-        for client in dead:
-            self._clients.discard(client)
+            box = self._outbox.get(client)
+            if box is None:
+                continue
+            pending = box.get("payload")
+            if pending is not None:
+                merged = dict(payload)
+                for key in ("terrain_changes", "looks"):
+                    if key in pending:
+                        merged[key] = pending[key] + payload.get(key, [])
+                for key in ("buildings", "resources", "chronicle", "petitions", "customs", "world", "blueprints", "labels"):
+                    if key in pending and key not in payload:
+                        merged[key] = pending[key]
+                if pending.get("kind") == "snapshot":
+                    merged["kind"] = "snapshot"
+                payload_to_send = merged
+            else:
+                payload_to_send = payload
+            box["payload"] = payload_to_send
+            box["event"].set()
+
+    async def _sender(self, websocket: WebSocket, box: dict) -> None:
+        try:
+            while True:
+                await box["event"].wait()
+                box["event"].clear()
+                payload = box.pop("payload", None)
+                if payload is None:
+                    continue
+                await websocket.send_text(dumps(payload))
+        except Exception:
+            self._clients.discard(websocket)
 
     async def register(self, websocket: WebSocket) -> None:
         await websocket.accept()
         async with self._lock:
-            first = dumps(self.snapshot())
+            first = self.snapshot()
+        box: dict = {"event": asyncio.Event(), "payload": first}
+        box["event"].set()
+        self._outbox[websocket] = box
         self._clients.add(websocket)
-        await websocket.send_text(first)
+        sender = asyncio.create_task(self._sender(websocket, box))
         try:
             while True:
                 await websocket.receive_text()
         except WebSocketDisconnect:
             pass
         finally:
+            sender.cancel()
             self._clients.discard(websocket)
+            self._outbox.pop(websocket, None)
 
     # -- commands ----------------------------------------------------------
 
@@ -287,11 +388,18 @@ class CivRuntime:
                 return {"reply": civ.player_talk(int(args["id"]))}
             if action == "propose":
                 return {"reply": civ.player_propose(int(args["id"]))}
+            if action == "say":
+                return civ.leader_says(
+                    str(args["text"]),
+                    petition_id=int(args["petition"]) if args.get("petition") else None,
+                    person_id=int(args["id"]) if args.get("id") else None,
+                )
         return {"reply": "Noma'lum buyruq"}
 
     async def reset(self) -> dict:
         async with self._lock:
             self._new_world()
+            self._signatures.clear()
             payload = self.snapshot()
         await self._broadcast(payload)
         await self.save()

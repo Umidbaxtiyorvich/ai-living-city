@@ -93,3 +93,18 @@ def test_live_movement_is_continuous():
     for _ in range(600):
         civ.move(1.0)
     assert (horse.x, horse.y) != before
+
+
+def test_farmers_choose_crops_hunters_bring_meat_and_animals_breed():
+    civ = Civilization(seed=7)
+    civ.genesis()
+    civ.leader_says("Hammaga dehqonchilikni o'rgataman")
+    start_animals = len(civ.animals)
+    run_years(civ, 5)
+    crops = {b.crop or b.last_crop for b in civ.buildings.values() if b.kind == "field"}
+    assert crops - {""}, "fields should have been sown with something"
+    assert any(a.age_days < 24 * 5 for a in civ.animals.values()), "animals should have young"
+    hunted = any("ovladim" in m for p in civ.people.values() for m in p.memories)
+    meat = sum(s.storage.meat for s in civ.settlements.values())
+    assert hunted or meat > 0, "someone should have hunted"
+    assert len(civ.animals) > 0 and start_animals > 0

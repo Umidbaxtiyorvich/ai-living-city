@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { act, civPost, useCiv } from "./store";
+import { LeaderPanel } from "./LeaderPanel";
+import { CROP_NAMES } from "./Crops";
 
 /** 1× is real life; the rest are for watching years go by. */
 const SPEEDS: [number, string][] = [
@@ -7,6 +9,7 @@ const SPEEDS: [number, string][] = [
   [1, "Haqiqiy"],
   [10, "10×"],
   [60, "1 daq/s"],
+  [100, "100× · 1 yil/s"],
   [360, "6 daq/s"],
   [1440, "1 kun/min"],
 ];
@@ -116,7 +119,12 @@ function Inspector() {
         <h3>{b.name}</h3>
         <p className="muted">{b.complete ? "Qurilgan" : `Qurilmoqda — ${Math.round(b.progress * 100)}%`}</p>
         {b.category === "home" && <p>Yashovchilar: {b.residents}</p>}
-        {b.kind === "field" && <Bar label="Hosil" value={b.growth} />}
+        {b.kind === "field" && (
+          <>
+            <p>{b.crop ? `Ekilgan: ${CROP_NAMES[b.crop] ?? b.crop}` : "Hozir bo'sh (navbatdagi ekin kutilmoqda)"}</p>
+            {b.crop && <Bar label="Pishish" value={b.growth} />}
+          </>
+        )}
       </div>
     );
   }
@@ -197,6 +205,9 @@ export function CivHud() {
   const [busy, setBusy] = useState(false);
   // On a phone the stats panel would cover the world; it opens on demand.
   const [showStats, setShowStats] = useState(() => window.innerWidth > 760);
+  const [showLeader, setShowLeader] = useState(false);
+  const waiting = useCiv((s) => s.petitions.filter((p) => p.status === "open").length);
+  const playerId = useCiv((s) => s.playerId);
 
   if (!stats || !time) return null;
 
@@ -214,7 +225,7 @@ export function CivHud() {
         <div className="civ-title">
           <strong>{stats.era}</strong>
           <span>
-            {time.year}-yil · {time.day_of_year}-kun · {hourLabel(time.hour)} {time.night ? "🌙" : "☀️"}
+            {time.year}-yil · {time.season ?? ""} · {time.day_of_year}-kun · {hourLabel(time.hour)} {time.night ? "🌙" : "☀️"}
           </span>
         </div>
         <div className="civ-speeds">
@@ -224,6 +235,11 @@ export function CivHud() {
             </button>
           ))}
         </div>
+        {playerId != null && (
+          <button className={`civ-leader-toggle ${waiting ? "alert" : ""}`} onClick={() => setShowLeader(!showLeader)}>
+            📜 {waiting ? `Murojaat: ${waiting}` : "Rahbar"}
+          </button>
+        )}
         <button className="civ-stats-toggle" onClick={() => setShowStats(!showStats)}>
           {showStats ? "✕" : "📊"}
         </button>
@@ -265,7 +281,7 @@ export function CivHud() {
                 {s.rank} · {s.population} kishi
               </span>
               <em>
-                🍎 {s.storage.food} · 🪵 {s.storage.wood} · 🪨 {s.storage.stone}
+                🍎 {s.storage.food} · 🍖 {s.storage.meat ?? 0} · 🪵 {s.storage.wood} · 🪨 {s.storage.stone}
               </em>
             </li>
           ))}
@@ -302,6 +318,7 @@ export function CivHud() {
 
       <Inspector />
       <PlayerPanel />
+      {showLeader && <LeaderPanel onClose={() => setShowLeader(false)} />}
     </div>
   );
 }

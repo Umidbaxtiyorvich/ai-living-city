@@ -12,6 +12,7 @@ import {
   Vector3,
   MeshStandardMaterial,
 } from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { useCiv } from "./store";
 
 const MAX = 1200;
@@ -31,7 +32,7 @@ export const realIds = new Set<number>();
 
 const STAGE: Record<string, number> = { baby: 0.32, child: 0.58, teenager: 0.86, adult: 1, elder: 0.96 };
 const ADULT = 0.5;
-const WORK = new Set(["chop", "quarry", "build", "farm", "forage"]);
+const WORK = new Set(["chop", "quarry", "build", "farm", "forage", "hunt"]);
 const SEATED = new Set(["think", "socialize", "eat"]);
 const CARRY_COLOUR: Record<string, string> = { food: "#c23b2a", wood: "#7a5230", stone: "#9a968e" };
 
@@ -45,7 +46,10 @@ function offset(x: number, y: number, z: number) {
   return new Matrix4().makeTranslation(x, y, z);
 }
 
-const LEG_AFTER = offset(0, -0.22, 0);
+/** Thigh hangs 0.235 from the hip; the shin (with its foot) from the knee below it. */
+const THIGH = 0.235;
+const LEG_AFTER = offset(0, -THIGH / 2, 0);
+const SHIN_AFTER = offset(0, -0.12, 0);
 const ARM_AFTER = offset(0, -0.17, 0);
 const TORSO_AFTER = offset(0, 0.21, 0).multiply(scaleOf(1, 1, 0.68));
 const HEAD_AFTER = offset(0, 0.52, 0.01);
@@ -68,6 +72,7 @@ const SELECT = new Color("#ffe08a");
 
 export function People() {
   const legs = useRef<InstancedMesh>(null);
+  const shins = useRef<InstancedMesh>(null);
   const arms = useRef<InstancedMesh>(null);
   const torsos = useRef<InstancedMesh>(null);
   const heads = useRef<InstancedMesh>(null);
@@ -77,7 +82,14 @@ export function People() {
 
   const geometry = useMemo(
     () => ({
-      leg: new CapsuleGeometry(0.058, 0.32, 3, 8),
+      leg: new CapsuleGeometry(0.062, 0.17, 3, 8),
+      shin: (() => {
+        // Shin plus a foot pointing forward, so a step shows a heel and toe.
+        const shin = new CapsuleGeometry(0.05, 0.17, 3, 8);
+        const foot = new BoxGeometry(0.075, 0.04, 0.15);
+        foot.translate(0, -0.12, 0.035);
+        return mergeGeometries([shin, foot]) ?? shin;
+      })(),
       arm: new CapsuleGeometry(0.042, 0.28, 3, 8),
       torso: new CapsuleGeometry(0.125, 0.2, 4, 10),
       head: new SphereGeometry(0.1, 14, 12),
@@ -106,9 +118,9 @@ export function People() {
   );
 
   useFrame((state, dt) => {
-    const meshes = [legs.current, arms.current, torsos.current, heads.current, hair.current, carried.current];
+    const meshes = [legs.current, arms.current, torsos.current, heads.current, hair.current, carried.current, shins.current];
     if (meshes.some((m) => !m)) return;
-    const [L, A, T, H, R, C] = meshes as InstancedMesh[];
+    const [L, A, T, H, R, C, S] = meshes as InstancedMesh[];
     const { people, looks, selected } = useCiv.getState();
     const t = state.clock.elapsedTime;
     const step = Math.min(dt, 0.1);
@@ -122,6 +134,17 @@ export function People() {
       rot.makeRotationX(angle);
       part.copy(base).multiply(pivot).multiply(rot).multiply(after);
       mesh.setMatrixAt(index, part);
+    };
+    // A leg is two bones: the thigh swings from the hip, the shin bends at the knee.
+    const leg = (index: number, side: number, thigh: number, knee: number) => {
+      put(L, index, side, HIP.y, 0, thigh, LEG_AFTER);
+      pivot.makeTranslation(side, HIP.y, 0);
+      rot.makeRotationX(thigh);
+      part.copy(base).multiply(pivot).multiply(rot);
+      pivot.makeTranslation(0, -THIGH, 0);
+      rot.makeRotationX(knee);
+      part.multiply(pivot).multiply(rot).multiply(SHIN_AFTER);
+      S.setMatrixAt(index, part);
     };
 
     for (const row of people) {
@@ -157,19 +180,25 @@ export function People() {
 
       q.setFromAxisAngle(up, body.yaw);
       if (lying) q.multiply(lie);
-      pos.set(body.x, lying ? 0.08 : baby ? 0.22 : sitting ? -0.2 * size : 0, body.z);
+      // The body rises a little over each planted foot, as a real walk does.
+      const bob = walking ? Math.abs(Math.cos(body.phase)) * 0.022 * size : 0;
+      pos.set(body.x, (lying ? 0.08 : baby ? 0.22 : sitting ? -0.2 * size : 0) + bob, body.z);
       scl.set(size, size, size);
       base.compose(pos, q, scl);
 
-      // Pose.
-      const swing = walking ? Math.sin(body.phase) * 0.65 : 0;
+      // Pose. Negative angles swing a limb forward. The knee bends while its
+      // leg swings forward (the foot lifts off the ground) and straightens to land.
+      const swing = walking ? Math.sin(body.phase) * 0.5 : 0;
       let legL = swing;
       let legR = -swing;
+      let kneeL = walking ? 0.12 + Math.max(0, -Math.cos(body.phase)) * 1.0 : 0.04;
+      let kneeR = walking ? 0.12 + Math.max(0, Math.cos(body.phase)) * 1.0 : 0.04;
       let armL = -swing * 0.8;
       let armR = swing * 0.8;
       let lean = walking ? 0.06 : 0;
       if (sitting) {
         legL = legR = -1.45;
+        kneeL = kneeR = 1.45;
         armL = armR = -0.35;
         lean = -0.05;
       }
@@ -177,6 +206,8 @@ export function People() {
         const beat = Math.sin(t * 6.5 + id);
         if (task === "farm" || task === "forage") {
           lean = 0.55 + beat * 0.08;
+          kneeL = kneeR = 0.35;
+          legL = legR = -0.2;
           armL = -1.1 + beat * 0.3;
           armR = -1.1 - beat * 0.3;
         } else {
@@ -190,7 +221,7 @@ export function People() {
       }
 
       if (realIds.has(id)) {
-        for (const mesh of [L, A]) {
+        for (const mesh of [L, A, S]) {
           mesh.setMatrixAt(n * 2, HIDDEN);
           mesh.setMatrixAt(n * 2 + 1, HIDDEN);
         }
@@ -200,8 +231,8 @@ export function People() {
         continue;
       }
 
-      put(L, n * 2, 0.075, HIP.y, 0, legL, LEG_AFTER);
-      put(L, n * 2 + 1, -0.075, HIP.y, 0, legR, LEG_AFTER);
+      leg(n * 2, 0.075, legL, kneeL);
+      leg(n * 2 + 1, -0.075, legR, kneeR);
       // Arms hang from shoulders that lean with the torso.
       const sy = HIP.y + Math.cos(lean) * 0.38;
       const sz = Math.sin(lean) * 0.38;
@@ -221,6 +252,8 @@ export function People() {
       const skin = colour(look?.skin ?? "#c68c5a");
       L.setColorAt(n * 2, female ? clothes : TROUSERS);
       L.setColorAt(n * 2 + 1, female ? clothes : TROUSERS);
+      S.setColorAt(n * 2, female ? skin : TROUSERS);
+      S.setColorAt(n * 2 + 1, female ? skin : TROUSERS);
       A.setColorAt(n * 2, clothes);
       A.setColorAt(n * 2 + 1, clothes);
       T.setColorAt(n, clothes);
@@ -231,12 +264,13 @@ export function People() {
     }
 
     L.count = n * 2;
+    S.count = n * 2;
     A.count = n * 2;
     T.count = n;
     H.count = n;
     R.count = n;
     C.count = n;
-    for (const mesh of [L, A, T, H, R, C]) {
+    for (const mesh of [L, A, T, H, R, C, S]) {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
@@ -257,6 +291,7 @@ export function People() {
   return (
     <group>
       <instancedMesh ref={legs} args={[geometry.leg, material, MAX * 2]} castShadow frustumCulled={false} />
+      <instancedMesh ref={shins} args={[geometry.shin, material, MAX * 2]} castShadow frustumCulled={false} />
       <instancedMesh ref={arms} args={[geometry.arm, material, MAX * 2]} castShadow frustumCulled={false} />
       <instancedMesh ref={torsos} args={[geometry.torso, material, MAX]} castShadow frustumCulled={false} onClick={pick} />
       <instancedMesh ref={heads} args={[geometry.head, skinMaterial, MAX]} castShadow frustumCulled={false} onClick={pick} />
