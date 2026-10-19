@@ -3,9 +3,9 @@
 FROM node:22-alpine AS frontend
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci --omit=dev 2>/dev/null || npm install
+# The build needs dev dependencies (vite, typescript); they never reach the final image.
+RUN npm ci || npm install
 COPY frontend/ ./
-RUN npm run fetch:humans || echo "human models not fetched; procedural figures will be used"
 RUN npm run build
 
 FROM python:3.12-slim AS backend
